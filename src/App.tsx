@@ -6,6 +6,7 @@ import Dashboard from "./pages/Dashboard";
 import Setup from "./pages/setup/Setup";
 import CreateActivity from "./pages/activities/CreateActivity";
 import InventoryEditor from "./pages/activities/InventoryEditor";
+import SideMenu from "./components/SideMenu";
 import { useAuth } from "./contexts/AuthContext";
 import RoleGate from "./components/RoleGate";
 import UsersAdmin from "./pages/admin/Users";

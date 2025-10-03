@@ -32,6 +32,8 @@ export default function CreateActivity(){
     yearId:"", zoneId:"", subzoneId:"",
     label:"", startDate:"", endDate:""
   });
+  const [zonesAll, setZonesAll] = useState<Zone[]>([]);
+  const [subzonesAll, setSubzonesAll] = useState<Subzone[]>([]);
 
   // Liste
   const [activities,setActivities] = useState<ActivityRow[]>([]);
@@ -42,9 +44,12 @@ export default function CreateActivity(){
     endDate: string;   // yyyy-mm-dd
   }>>({});
 
+  // Filtres
+  const [filterYearId, setFilterYearId] = useState<string>("");
+  const [filterStatus, setFilterStatus] = useState<"all"|"complete"|"incomplete">("all");
+
   const nav = useNavigate();
 
-  // Utils
   function tsToInput(d:any): string {
     try {
       const date: Date =
@@ -60,10 +65,13 @@ export default function CreateActivity(){
     }
   }
 
-  // Chargement des référentiels
+  // Chargement référentiels
   useEffect(()=>{ (async()=>{
     const ys = await getDocs(collection(db,"years"));
-    setYears(ys.docs.map(d=>({id:d.id, ...(d.data() as any)})));
+    const list = ys.docs.map(d=>({id:d.id, ...(d.data() as any)})) as Year[];
+    setYears(list);
+    // Par défaut on peut sélectionner l'année la plus récente (facultatif)
+    // if (list.length) setFilterYearId(list[0].id);
   })(); },[]);
 
   useEffect(()=>{ if(!form.yearId) return;
@@ -84,15 +92,53 @@ export default function CreateActivity(){
     })();
   },[form.zoneId]);
 
-  // Liste activités (live)
+  // Liste activités (live) avec filtres Année + Statut
   useEffect(()=> {
-    const qAct = query(collection(db, "activities"), orderBy("startDate","desc"), limit(20));
+    setLoadingList(true);
+    let ref: any = collection(db, "activities");
+    const clauses: any[] = [];
+
+    if (filterYearId) clauses.push(where("yearId","==",filterYearId));
+    if (filterStatus !== "all") {
+      const wantComplete = filterStatus === "complete";
+      clauses.push(where("isComplete","==", wantComplete));
+    }
+
+    // Important: orderBy peut nécessiter un index composite avec les where ci-dessus.
+    // Firestore te donnera un lien "Create index" si besoin dans la console.
+    const qAct = query(ref, ...clauses, orderBy("startDate","desc"), limit(50));
+
     const unsub = onSnapshot(qAct, snap => {
       const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as ActivityRow[];
       setActivities(list);
       setLoadingList(false);
+    }, err => {
+      console.error("Erreur onSnapshot activités:", err);
+      // Fallback simple: si l'index n'existe pas encore, on écoute sans filtres et on filtre en mémoire
+      const baseQ = query(collection(db,"activities"), orderBy("startDate","desc"), limit(100));
+      onSnapshot(baseQ, s2 => {
+        let list = s2.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as ActivityRow[];
+        if (filterYearId) list = list.filter(a => a.yearId === filterYearId);
+        if (filterStatus !== "all") {
+          const wantComplete = filterStatus === "complete";
+          list = list.filter(a => !!a.isComplete === wantComplete);
+        }
+        setActivities(list);
+        setLoadingList(false);
+      });
     });
+
     return () => unsub();
+  }, [filterYearId, filterStatus]);
+
+  useEffect(() => {
+    const unsubZ = onSnapshot(collection(db, "zones"), s => {
+      setZonesAll(s.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+    });
+    const unsubSZ = onSnapshot(collection(db, "subzones"), s => {
+      setSubzonesAll(s.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+    });
+    return () => { unsubZ(); unsubSZ(); };
   }, []);
 
   async function submit(e:React.FormEvent){
@@ -110,13 +156,11 @@ export default function CreateActivity(){
       isComplete: false,
       createdAt: serverTimestamp()
     });
-    // Reset form (optionnel)
     setForm({ yearId: "", zoneId: "", subzoneId: "", label: "", startDate: "", endDate: "" });
-    // Aller directement à l'inventaire si souhaité
     nav(`/activities/${ref.id}/inventory`);
   }
 
-  // Edition inline
+  // Édition inline
   function startEdit(a: ActivityRow) {
     setEditing(prev => ({
       ...prev,
@@ -149,17 +193,20 @@ export default function CreateActivity(){
     await deleteDoc(doc(db,"activities",a.id));
   }
 
-  // Affichage noms
+  // Libellés
   const yearById = useMemo(()=>Object.fromEntries(years.map(y=>[y.id,y.label])),[years]);
   const zoneById = useMemo(()=>Object.fromEntries(zones.map(z=>[z.id,z.name])),[zones]);
   const subzoneById = useMemo(()=>Object.fromEntries(subzones.map(s=>[s.id,s.name])),[subzones]);
+  const yearLabelById = useMemo(() => Object.fromEntries(years.map(y => [y.id, y.label])), [years]);
+  const zoneNameById = useMemo(() => Object.fromEntries(zonesAll.map(z => [z.id, z.name])), [zonesAll]);
+  const subzoneNameById = useMemo(() => Object.fromEntries(subzonesAll.map(s => [s.id, s.name])), [subzonesAll]);
 
   return (
     <div className="p-4">
       <h1 className="text-xl font-semibold mb-4">Activités</h1>
 
       <div className="grid lg:grid-cols-2 gap-6">
-        {/* Carte formulaire */}
+        {/* Formulaire (à gauche) */}
         <div className="border rounded-xl p-4 bg-white">
           <h2 className="font-semibold mb-3">Créer une activité</h2>
           <form onSubmit={submit} className="space-y-3">
@@ -179,9 +226,7 @@ export default function CreateActivity(){
               className="border p-2 w-full rounded disabled:bg-gray-100"
             >
               <option value="">-- Zone --</option>
-              {zones
-                .filter(z=>z.yearId===form.yearId)
-                .map(z=><option key={z.id} value={z.id}>{z.name}</option>)}
+              {zones.filter(z=>z.yearId===form.yearId).map(z=><option key={z.id} value={z.id}>{z.name}</option>)}
             </select>
 
             <select
@@ -191,9 +236,7 @@ export default function CreateActivity(){
               className="border p-2 w-full rounded disabled:bg-gray-100"
             >
               <option value="">-- Sous-zone --</option>
-              {subzones
-                .filter(s=>s.zoneId===form.zoneId)
-                .map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+              {subzones.filter(s=>s.zoneId===form.zoneId).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
 
             <input
@@ -226,11 +269,35 @@ export default function CreateActivity(){
           </form>
         </div>
 
-        {/* Carte liste + CRUD */}
+        {/* Liste + Filtres + CRUD (à droite) */}
         <div className="border rounded-xl p-4 bg-white">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold">Dernières activités</h2>
             <span className="text-xs text-gray-500">{activities.length} éléments</span>
+          </div>
+
+          {/* Filtres */}
+          <div className="flex flex-wrap gap-2 mb-3">
+            <select
+              value={filterYearId}
+              onChange={(e)=>setFilterYearId(e.target.value)}
+              className="border p-2 rounded"
+            >
+              <option value="">Toutes les années</option>
+              {years.map(y=>(
+                <option key={y.id} value={y.id}>{y.label}</option>
+              ))}
+            </select>
+
+            <select
+              value={filterStatus}
+              onChange={(e)=>setFilterStatus(e.target.value as any)}
+              className="border p-2 rounded"
+            >
+              <option value="all">Tous les statuts</option>
+              <option value="complete">Complet</option>
+              <option value="incomplete">Incomplet</option>
+            </select>
           </div>
 
           {loadingList && <div>Chargement…</div>}
@@ -245,7 +312,6 @@ export default function CreateActivity(){
               const endStr = tsToInput(a.endDate);
               return (
                 <div key={a.id} className="py-3">
-                  {/* Ligne d’infos */}
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1">
                       {!draft ? (
@@ -255,7 +321,7 @@ export default function CreateActivity(){
                             {startStr} → {endStr}
                           </div>
                           <div className="text-xs text-gray-500">
-                            {yearById[a.yearId] ?? "?"} / {zoneById[a.zoneId] ?? "?"} / {subzoneById[a.subzoneId] ?? "?"}
+                            {yearLabelById[a.yearId] ?? "?"} / {zoneNameById[a.zoneId] ?? "?"} / {subzoneNameById[a.subzoneId] ?? "?"}
                           </div>
                           <div className="text-xs">
                             Retours : {a.itemsReturned ?? 0}/{a.itemsTotal ?? 0} — {a.isComplete ? "🟢 Complet" : "🟠 Incomplet"}
@@ -284,7 +350,6 @@ export default function CreateActivity(){
                       )}
                     </div>
 
-                    {/* Actions */}
                     <div className="flex-shrink-0 flex flex-col gap-2">
                       {!draft ? (
                         <>
@@ -331,8 +396,7 @@ export default function CreateActivity(){
           </div>
 
           <div className="text-xs text-gray-500 mt-3">
-            Astuce : l’édition inline modifie <code>libellé</code> et <code>dates</code>.  
-            Pour changer année/zone/sous-zone, recrée l’activité (ou ajoute un écran avancé).
+            Astuce : l’édition inline modifie <code>libellé</code> et <code>dates</code>.
           </div>
         </div>
       </div>

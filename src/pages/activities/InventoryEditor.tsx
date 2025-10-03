@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
   collection, doc, getDoc, getDocs, addDoc, updateDoc,
-  query, serverTimestamp, orderBy
+  query, serverTimestamp, orderBy, setDoc
 } from "firebase/firestore";
 import { db } from "../../firebase";
 import type { Activity, Item, Service } from "../../types";
@@ -41,8 +41,10 @@ export default function InventoryEditor(){
     const qty = Number(qtyStr ?? 1) || 1;
     const sortieChecked = true;
     const now = serverTimestamp();
+    await setDoc(doc(db,"activities",activityId,"serviceItems",serviceId), { serviceId, createdAt: now }, { merge: true });
     const ref = await addDoc(
       collection(db,"activities",activityId,"serviceItems",serviceId,"items"), {
+        activityId,
         name, qty,
         sortieChecked, sortieAt: now,
         retourChecked: false, retourAt: null,
@@ -81,6 +83,26 @@ export default function InventoryEditor(){
     const returned = all.filter(i=>i.retourChecked).length;
     return { total, returned, complete: total>0 && total===returned };
   },[itemsByService]);
+
+  useEffect(() => {
+    if (!activityId) return;
+    // évite d'écrire au tout premier rendu avant chargement complet
+    const total = stats.total;
+    const returned = stats.returned;
+    const isComplete = stats.complete;
+    (async () => {
+      try {
+        await updateDoc(doc(db, "activities", activityId), {
+          itemsTotal: total,
+          itemsReturned: returned,
+          isComplete,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (e) {
+        console.error("MAJ activité échouée:", e);
+      }
+    })();
+  }, [activityId, stats.total, stats.returned, stats.complete]);
 
   return (
     <div className="p-4 space-y-4">

@@ -1,30 +1,58 @@
-
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
+    function isManager() {
+      return signedIn() && (
+        request.auth.token.role == 'pdd_admin' ||
+        request.auth.token.role == 'pdd_respo'
+      );
+    }
+    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
 
+    // Tout le monde connecté peut LIRE (lecture), sauf notes sensibles
     match /{document=**} {
       allow read: if signedIn();
     }
 
+    // USERS: chacun peut créer son doc; MAJ par soi-même sans toucher au rôle.
     match /users/{uid} {
-      allow create: if signedIn();
-      allow read, update: if signedIn() && request.auth.uid == uid;
+      allow create: if isSelf(uid);
+      allow read: if isSelf(uid) || isManager();
+      allow update: if (isSelf(uid) && request.resource.data.role == resource.data.role)
+                    || isManager();
     }
 
+    // Paramétrage: seulement admin/respo peuvent écrire
+    match /years/{id} { 
+      allow read: if signedIn(); 
+      allow create, update, delete: if isManager();
+    }
+    match /zones/{id} { 
+      allow read: if signedIn(); 
+      allow create, update, delete: if isManager();
+    }
+    match /subzones/{id} { 
+      allow read: if signedIn(); 
+      allow create, update, delete: if isManager();
+    }
+    match /services/{id} { 
+      allow read: if signedIn(); 
+      allow create, update, delete: if isManager();
+    }
+
+    // Activités & inventaire: tous les membres connectés peuvent créer/mettre à jour
     match /activities/{activityId} {
-      allow create: if signedIn();
-      allow update, read: if signedIn();
+      allow read, update: if signedIn();
+      allow create, delete: if isManager();
     }
-
+    match /activities/{activityId}/serviceItems/{serviceId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn();
+    }
     match /activities/{activityId}/serviceItems/{serviceId}/items/{itemId} {
       allow read, create, update: if signedIn();
+      allow delete: if isManager();
     }
-
-    match /years/{id} { allow read, create, update: if signedIn(); }
-    match /zones/{id} { allow read, create, update: if signedIn(); }
-    match /subzones/{id} { allow read, create, update: if signedIn(); }
-    match /services/{id} { allow read, create, update: if signedIn(); }
   }
 }

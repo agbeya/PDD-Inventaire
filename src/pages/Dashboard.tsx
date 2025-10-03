@@ -11,10 +11,13 @@ import { db, auth } from "../firebase";
 import type { Activity } from "../types";
 import { Link } from "react-router-dom";
 import { signOut } from "firebase/auth";
+import { useAuth } from "../contexts/AuthContext";
 
 export default function Dashboard() {
   const [activities, setActivities] = useState<Activity[]>([]);
   const [loading, setLoading] = useState(true);
+  const { role } = useAuth();
+  const isManager = role === "pdd_admin" || role === "pdd_respo";
 
   useEffect(() => {
     (async () => {
@@ -40,12 +43,12 @@ export default function Dashboard() {
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Activités récentes</h1>
         <div className="flex gap-2">
-          <Link
+          {isManager && <Link
             to="/activities/new"
             className="bg-blue-600 text-white px-3 py-2 rounded"
           >
             + Nouvelle activité
-          </Link>
+          </Link>}
           <button
             onClick={doSignOut}
             className="border px-3 py-2 rounded"

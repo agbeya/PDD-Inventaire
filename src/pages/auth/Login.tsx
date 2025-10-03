@@ -1,5 +1,8 @@
 
 import { useEffect, useState } from "react";
+import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { db } from "../../firebase";
+
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -32,7 +35,13 @@ export default function Login() {
       if (mode === "login") {
         await signInWithEmailAndPassword(auth, email, pass);
       } else {
-        await createUserWithEmailAndPassword(auth, email, pass);
+        const cred = await createUserWithEmailAndPassword(auth, email, pass);
+        // crée le profil user avec rôle par défaut
+        await setDoc(doc(db, "users", cred.user.uid), {
+          email,
+          role: "pdd_member",
+          createdAt: serverTimestamp()
+        });
       }
     } catch (err: any) {
       setError(err?.message ?? "Erreur inconnue");

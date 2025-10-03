@@ -278,9 +278,11 @@ export default function Setup() {
               />
               Actif
             </label>
-            <button className="bg-blue-600 text-white px-4 py-2 rounded">
-              Enregistrer
-            </button>
+            <div>
+              <button className="bg-blue-600 text-white px-4 py-2 rounded">
+                Enregistrer
+              </button>
+            </div>
           </form>
         </div>
         <div className="border rounded-xl p-4 bg-white">

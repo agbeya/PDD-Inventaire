@@ -1,3 +1,4 @@
+import { useAuth } from "../../contexts/AuthContext";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
@@ -53,6 +54,7 @@ export default function InventoryEditor() {
   // UI: édition inline par item
   const [editing, setEditing] = useState<Record<string, EditDraft>>({});
   const [busyItemIds, setBusyItemIds] = useState<Set<string>>(new Set());
+  const { user } = useAuth();
 
   useEffect(() => {
     (async () => {
@@ -114,7 +116,7 @@ export default function InventoryEditor() {
     const qty = Number(d?.qty ?? "1") || 1;
     if (!name) return;
 
-    const now = serverTimestamp();
+    const nowServer = serverTimestamp();
     const ref = await addDoc(
       collection(db, "activities", activityId, "serviceItems", serviceId, "items"),
       {
@@ -122,22 +124,32 @@ export default function InventoryEditor() {
         name,
         qty,
         sortieChecked: true,
-        sortieAt: now,
+        sortieAt: nowServer,              // en base: horodatage serveur
         retourChecked: false,
         retourAt: null,
-        createdAt: now,
-        updatedAt: now,
+        createdAt: nowServer,
+        updatedAt: nowServer,
       }
     );
 
+    // ✅ État local optimiste avec Date() pour affichage immédiat (sortieAt/createdAt/updatedAt)
+    const nowLocal = new Date();
     setItemsByService(prev => ({
       ...prev,
-      [serviceId]: [...(prev[serviceId] || []), {
-        id: ref.id, name, qty,
-        sortieChecked: true, sortieAt: null,
-        retourChecked: false, retourAt: null,
-        createdAt: null, updatedAt: null
-      }]
+      [serviceId]: [
+        ...(prev[serviceId] || []),
+        {
+          id: ref.id,
+          name,
+          qty,
+          sortieChecked: true,
+          sortieAt: nowLocal,             // << affiche tout de suite
+          retourChecked: false,
+          retourAt: null,
+          createdAt: nowLocal,
+          updatedAt: nowLocal,
+        } as any,
+      ],
     }));
     cancelAddRow(serviceId);
   }
@@ -146,18 +158,32 @@ export default function InventoryEditor() {
   async function toggleRetour(serviceId: string, item: Item) {
     if (!activityId) return;
     setBusyItemIds(prev => new Set(prev).add(item.id));
-    const ref = doc(db, "activities", activityId, "serviceItems", serviceId, "items", item.id);
+
     const retourChecked = !item.retourChecked;
-    await updateDoc(ref, {
-      retourChecked,
-      retourAt: retourChecked ? serverTimestamp() : null,
-      updatedAt: serverTimestamp()
-    });
+    await updateDoc(
+      doc(db, "activities", activityId, "serviceItems", serviceId, "items", item.id),
+      {
+        retourChecked,
+        retourAt: retourChecked ? serverTimestamp() : null,
+        updatedAt: serverTimestamp(),
+      }
+    );
+
+    // ✅ État local optimiste pour retourAt
     setItemsByService(prev => ({
       ...prev,
       [serviceId]: prev[serviceId].map(it =>
-        it.id === item.id ? { ...it, retourChecked, retourAt: null } : it)
+        it.id === item.id
+          ? {
+              ...it,
+              retourChecked,
+              retourAt: retourChecked ? new Date() : null, // << ici
+              updatedAt: new Date(),
+            }
+          : it
+      ),
     }));
+
     setBusyItemIds(prev => {
       const n = new Set(prev);
       n.delete(item.id);
@@ -225,7 +251,6 @@ export default function InventoryEditor() {
     if (items.length === 0) return;
     if (!confirm(`Marquer ${items.length} objet(s) comme retourné(s) ?`)) return;
 
-    // Mise à jour séquentielle (simple et fiable)
     for (const it of items) {
       const ref = doc(db, "activities", activityId, "serviceItems", serviceId, "items", it.id);
       await updateDoc(ref, {
@@ -234,10 +259,9 @@ export default function InventoryEditor() {
         updatedAt: serverTimestamp(),
       });
     }
-    // maj locale
     setItemsByService(prev => ({
       ...prev,
-      [serviceId]: (prev[serviceId] || []).map(i => ({ ...i, retourChecked: true }))
+      [serviceId]: (prev[serviceId] || []).map(i => ({ ...i, retourChecked: true, retourAt: new Date() }))
     }));
   }
 
@@ -273,7 +297,9 @@ export default function InventoryEditor() {
   function exportPdf() {
     if (!activity) return;
 
-    // Calcule les compteurs à la volée depuis l’état actuel
+    const exportedBy = user?.email ?? "Utilisateur inconnu";
+    const nowStr = format(new Date(), "dd/MM/yyyy HH:mm", { locale: fr });
+
     const allItems = Object.values(itemsByService).flat();
     const total = allItems.length;
     const returned = allItems.filter(i => i.retourChecked).length;
@@ -346,8 +372,10 @@ export default function InventoryEditor() {
         didDrawPage: () => {
           docPdf.setFont("helvetica", "normal");
           docPdf.setFontSize(9);
-          const str = `Page ${docPdf.getNumberOfPages()}`;
-          docPdf.text(str, pageWidth - M.right, pageHeight - 16, { align: "right" });
+          const leftText = `Exporté le ${nowStr} — ${exportedBy}`;
+          docPdf.text(leftText, M.left, pageHeight - 16, { align: "left" });
+          const rightText = `Page ${docPdf.getNumberOfPages()}`;
+          docPdf.text(rightText, pageWidth - M.right, pageHeight - 16, { align: "right" });
         },
       });
 

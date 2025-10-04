@@ -10,12 +10,12 @@ service cloud.firestore {
     }
     function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
 
-    // Tout le monde connecté peut LIRE (lecture), sauf notes sensibles
+    // Lecture: tout utilisateur authentifié
     match /{document=**} {
       allow read: if signedIn();
     }
 
-    // USERS: chacun peut créer son doc; MAJ par soi-même sans toucher au rôle.
+    // USERS
     match /users/{uid} {
       allow create: if isSelf(uid);
       allow read: if isSelf(uid) || isManager();
@@ -23,36 +23,39 @@ service cloud.firestore {
                     || isManager();
     }
 
-    // Paramétrage: seulement admin/respo peuvent écrire
-    match /years/{id} { 
-      allow read: if signedIn(); 
+    // Paramétrage (référentiels)
+    match /years/{id} {
+      allow read: if signedIn();
       allow create, update, delete: if isManager();
     }
-    match /zones/{id} { 
-      allow read: if signedIn(); 
+    match /zones/{id} {
+      allow read: if signedIn();
       allow create, update, delete: if isManager();
     }
-    match /subzones/{id} { 
-      allow read: if signedIn(); 
+    match /subzones/{id} {
+      allow read: if signedIn();
       allow create, update, delete: if isManager();
     }
-    match /services/{id} { 
-      allow read: if signedIn(); 
+    match /services/{id} {
+      allow read: if signedIn();
       allow create, update, delete: if isManager();
     }
 
-    // Activités & inventaire: tous les membres connectés peuvent créer/mettre à jour
+    // Activités
     match /activities/{activityId} {
       allow read, update: if signedIn();
       allow create, delete: if isManager();
-    }
-    match /activities/{activityId}/serviceItems/{serviceId} {
-      allow read: if signedIn();
-      allow create, update: if signedIn();
-    }
-    match /activities/{activityId}/serviceItems/{serviceId}/items/{itemId} {
-      allow read, create, update: if signedIn();
-      allow delete: if isManager();
+
+      // Regroupé sous activities pour plus de clarté
+      match /serviceItems/{serviceId} {
+        allow read: if signedIn();
+        allow create, update: if signedIn();
+
+        match /items/{itemId} {
+          // ⬇️ Tous les utilisateurs connectés peuvent créer/éditer/supprimer un objet
+          allow read, create, update, delete: if signedIn();
+        }
+      }
     }
   }
 }

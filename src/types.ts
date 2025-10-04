@@ -10,7 +10,7 @@ export type Activity = {
   startDate:any; 
   endDate:any;
   yearId:string; 
-  zoneId:string; 
+  // zoneId:string; 
   subzoneId:string;
   itemsTotal:number; 
   itemsReturned:number; 

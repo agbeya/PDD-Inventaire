@@ -1,8 +1,93 @@
+/* src/index.css */
+
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root { height: 100%; }
-body { @apply bg-gray-50 text-gray-900; }
-a { @apply text-blue-700; }
+/* 4) Base typographie + lissage */
+html, body, #root {
+  height: 100%;
+}
+
+:root {
+  /* Couleur de fond douce et texte lisible */
+  --app-bg: #f8fafc;      /* gris très clair */
+  --app-fg: #1f2937;      /* gris foncé */
+  --app-muted: #64748b;   /* gris secondaire */
+  --app-brand: #0ea5e9;   /* bleu clair (peut être ajusté) */
+}
+
+/* 5) Police globale : Century Gothic en priorité, sinon Poppins, puis sans-serif */
+body, input, button, textarea, select {
+  font-family: "Century Gothic", "Apple Gothic", "Avant Garde", Poppins, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Noto Sans", "Liberation Sans", sans-serif;
+  color: var(--app-fg);
+  background-color: var(--app-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* --- 6) Liens --- */
+a {
+  color: var(--app-brand);
+  text-decoration: none;         /* Désactive par défaut */
+}
+a:hover {
+  text-decoration: none;         /* Empêche le soulignement global */
+}
+
+/* Soulignement uniquement dans les paragraphes de contenu : */
+main a:hover,
+.prose a:hover {
+  text-decoration: underline;    /* Garde les liens classiques soulignés */
+}
+
+/* 7) Sélection de texte */
+::selection {
+  background: rgba(14, 165, 233, 0.15); /* bleu clair translucide */
+  color: inherit;
+}
+
+/* 8) États de focus visibles et doux (accessibilité) */
+:focus-visible {
+  outline: 2px solid rgba(14, 165, 233, 0.6);
+  outline-offset: 2px;
+}
+
+/* 9) Scrollbar (facultatif, WebKit) */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #cbd5e1; /* gris tailwind slate-300 */
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8; /* slate-400 */
+}
+
+/* 10) Petites classes utilitaires si besoin sans toucher au JSX */
+.card {
+  @apply bg-white border rounded-xl p-4;
+}
+.btn {
+  @apply inline-flex items-center justify-center rounded px-3 py-2;
+}
+.btn-primary {
+  @apply bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60;
+}
+.btn-ghost {
+  @apply hover:bg-gray-100;
+}
+.input {
+  @apply border rounded w-full p-2;
+}
+.label {
+  @apply text-sm text-gray-600;
+}

@@ -7,7 +7,7 @@ import { db } from "../../firebase";
 import { Link, useNavigate } from "react-router-dom";
 
 type Year = { id:string; label:string };
-type Zone = { id:string; name:string; yearId:string };
+type Zone = { id:string; name:string };
 type Subzone = { id:string; name:string; zoneId:string };
 
 type ActivityRow = {
@@ -16,12 +16,13 @@ type ActivityRow = {
   startDate: any;
   endDate: any;
   yearId: string;
-  zoneId: string;
   subzoneId: string;
   isComplete?: boolean;
   itemsTotal?: number;
   itemsReturned?: number;
 };
+
+const collator = new Intl.Collator("fr", { sensitivity: "base", numeric: true });
 
 export default function CreateActivity(){
   // Form
@@ -32,19 +33,17 @@ export default function CreateActivity(){
     yearId:"", zoneId:"", subzoneId:"",
     label:"", startDate:"", endDate:""
   });
-  const [zonesAll, setZonesAll] = useState<Zone[]>([]);
-  const [subzonesAll, setSubzonesAll] = useState<Subzone[]>([]);
 
   // Liste
   const [activities,setActivities] = useState<ActivityRow[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [editing, setEditing] = useState<Record<string, {
     label: string;
-    startDate: string; // yyyy-mm-dd
-    endDate: string;   // yyyy-mm-dd
+    startDate: string;
+    endDate: string;
   }>>({});
 
-  // Filtres
+  // Filtres LISTE
   const [filterYearId, setFilterYearId] = useState<string>("");
   const [filterStatus, setFilterStatus] = useState<"all"|"complete"|"incomplete">("all");
 
@@ -65,57 +64,71 @@ export default function CreateActivity(){
     }
   }
 
-  // Chargement référentiels
+  // Référentiels (triés)
   useEffect(()=>{ (async()=>{
-    const ys = await getDocs(collection(db,"years"));
-    const list = ys.docs.map(d=>({id:d.id, ...(d.data() as any)})) as Year[];
-    setYears(list);
-    // Par défaut on peut sélectionner l'année la plus récente (facultatif)
-    // if (list.length) setFilterYearId(list[0].id);
+    // Années triées par libellé
+    const ysSnap = await getDocs(query(collection(db,"years"), orderBy("label")));
+    const ys = ysSnap.docs.map(d=>({id:d.id, ...(d.data() as any)})) as Year[];
+    ys.sort((a,b)=>collator.compare(a.label||"", b.label||""));
+    setYears(ys);
+
+    // Zones triées par nom
+    const zsSnap = await getDocs(query(collection(db,"zones"), orderBy("name")));
+    const zs = zsSnap.docs.map(d=>({id:d.id, ...(d.data() as any)})) as Zone[];
+    zs.sort((a,b)=>collator.compare(a.name||"", b.name||""));
+    setZones(zs);
   })(); },[]);
 
-  useEffect(()=>{ if(!form.yearId) return;
-    (async()=>{
-      const qz = query(collection(db,"zones"), where("yearId","==",form.yearId));
-      const zs = await getDocs(qz);
-      setZones(zs.docs.map(d=>({id:d.id, ...(d.data() as any)})));
-      setSubzones([]); setForm(f=>({...f, zoneId:"", subzoneId:""}));
-    })();
-  },[form.yearId]);
+  // Sous-zones filtrées par zone choisie (triées)
+  // 🔁 remplace tout l'effet "Sous-zones filtrées…" par ceci
+  useEffect(() => {
+    if (!form.zoneId) {
+      setSubzones([]);
+      setForm(f => ({ ...f, subzoneId: "" }));
+      return;
+    }
+    (async () => {
+      try {
+        const qsz = query(
+          collection(db, "subzones"),
+          where("zoneId", "==", form.zoneId) // ← plus de orderBy ici
+        );
+        const szz = await getDocs(qsz);
+        const list = szz.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as Subzone[];
 
-  useEffect(()=>{ if(!form.zoneId) return;
-    (async()=>{
-      const qsz = query(collection(db,"subzones"), where("zoneId","==",form.zoneId));
-      const szz = await getDocs(qsz);
-      setSubzones(szz.docs.map(d=>({id:d.id, ...(d.data() as any)})));
-      setForm(f=>({...f, subzoneId:""}));
-    })();
-  },[form.zoneId]);
+        // tri local (alpha FR + numérique)
+        const collator = new Intl.Collator("fr", { sensitivity: "base", numeric: true });
+        list.sort((a, b) => collator.compare(a.name || "", b.name || ""));
 
-  // Liste activités (live) avec filtres Année + Statut
+        setSubzones(list);
+        setForm(f => ({ ...f, subzoneId: "" }));
+      } catch (e) {
+        console.error("Chargement sous-zones échoué :", e);
+        setSubzones([]);
+      }
+    })();
+  }, [form.zoneId]);
+
+  // Liste activités (live) — avec filtres Année + Statut
   useEffect(()=> {
     setLoadingList(true);
-    let ref: any = collection(db, "activities");
-    const clauses: any[] = [];
 
+    const clauses:any[] = [];
     if (filterYearId) clauses.push(where("yearId","==",filterYearId));
     if (filterStatus !== "all") {
       const wantComplete = filterStatus === "complete";
       clauses.push(where("isComplete","==", wantComplete));
     }
 
-    // Important: orderBy peut nécessiter un index composite avec les where ci-dessus.
-    // Firestore te donnera un lien "Create index" si besoin dans la console.
-    const qAct = query(ref, ...clauses, orderBy("startDate","desc"), limit(50));
+    const qAct = query(collection(db,"activities"), ...clauses, orderBy("startDate","desc"), limit(50));
 
     const unsub = onSnapshot(qAct, snap => {
       const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as ActivityRow[];
       setActivities(list);
       setLoadingList(false);
     }, err => {
-      console.error("Erreur onSnapshot activités:", err);
-      // Fallback simple: si l'index n'existe pas encore, on écoute sans filtres et on filtre en mémoire
-      const baseQ = query(collection(db,"activities"), orderBy("startDate","desc"), limit(100));
+      console.warn("Index manquant, fallback mémoire:", err?.message);
+      const baseQ = query(collection(db,"activities"), orderBy("startDate","desc"), limit(200));
       onSnapshot(baseQ, s2 => {
         let list = s2.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as ActivityRow[];
         if (filterYearId) list = list.filter(a => a.yearId === filterYearId);
@@ -131,25 +144,31 @@ export default function CreateActivity(){
     return () => unsub();
   }, [filterYearId, filterStatus]);
 
-  useEffect(() => {
-    const unsubZ = onSnapshot(collection(db, "zones"), s => {
-      setZonesAll(s.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-    });
-    const unsubSZ = onSnapshot(collection(db, "subzones"), s => {
-      setSubzonesAll(s.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
-    });
-    return () => { unsubZ(); unsubSZ(); };
-  }, []);
+  // On veut toutes les sous-zones (pour affichage de la liste)
+  const [subzonesAll, setSubzonesAll] = useState<Subzone[]>([]);
+  useEffect(()=> {
+    (async ()=>{
+      const allSnap = await getDocs(query(collection(db,"subzones"), orderBy("name")));
+      const all = allSnap.docs.map(d=>({id:d.id, ...(d.data() as any)})) as Subzone[];
+      all.sort((a,b)=>collator.compare(a.name||"", b.name||""));
+      setSubzonesAll(all);
+    })();
+  },[]);
 
+  // Maps pour affichage
+  const yearLabelById   = useMemo(()=>Object.fromEntries(years.map(y=>[y.id,y.label])),[years]);
+  const zoneById        = useMemo(()=>Object.fromEntries(zones.map(z=>[z.id,z.name])),[zones]);
+  const subzoneAllById  = useMemo(()=>Object.fromEntries(subzonesAll.map(s=>[s.id,s])),[subzonesAll]);
+
+  // Création activité — on n’enregistre PAS zoneId
   async function submit(e:React.FormEvent){
     e.preventDefault();
-    if(!form.yearId || !form.zoneId || !form.subzoneId || !form.label || !form.startDate || !form.endDate) return;
+    if(!form.yearId || !form.subzoneId || !form.label || !form.startDate || !form.endDate) return;
     const ref = await addDoc(collection(db,"activities"),{
       label: form.label.trim(),
       startDate: new Date(form.startDate),
       endDate: new Date(form.endDate),
       yearId: form.yearId,
-      zoneId: form.zoneId,
       subzoneId: form.subzoneId,
       itemsTotal: 0,
       itemsReturned: 0,
@@ -160,7 +179,7 @@ export default function CreateActivity(){
     nav(`/activities/${ref.id}/inventory`);
   }
 
-  // Édition inline
+  // Edition inline
   function startEdit(a: ActivityRow) {
     setEditing(prev => ({
       ...prev,
@@ -193,42 +212,56 @@ export default function CreateActivity(){
     await deleteDoc(doc(db,"activities",a.id));
   }
 
-  // Libellés
-  const yearById = useMemo(()=>Object.fromEntries(years.map(y=>[y.id,y.label])),[years]);
-  const zoneById = useMemo(()=>Object.fromEntries(zones.map(z=>[z.id,z.name])),[zones]);
-  const subzoneById = useMemo(()=>Object.fromEntries(subzones.map(s=>[s.id,s.name])),[subzones]);
-  const yearLabelById = useMemo(() => Object.fromEntries(years.map(y => [y.id, y.label])), [years]);
-  const zoneNameById = useMemo(() => Object.fromEntries(zonesAll.map(z => [z.id, z.name])), [zonesAll]);
-  const subzoneNameById = useMemo(() => Object.fromEntries(subzonesAll.map(s => [s.id, s.name])), [subzonesAll]);
+  // Helpers d’affichage pour la liste
+  function getZoneNameForActivity(a: ActivityRow): string {
+    // legacy
+    // @ts-ignore
+    if ((a as any).zoneId && zoneById[(a as any).zoneId]) return zoneById[(a as any).zoneId];
+    const sz = subzoneAllById[a.subzoneId];
+    if (!sz) return "?";
+    const zName = zoneById[sz.zoneId];
+    return zName || "?";
+  }
+  function getSubzoneNameForActivity(a: ActivityRow): string {
+    const sz = subzoneAllById[a.subzoneId];
+    return sz?.name ?? "?";
+  }
+
+  // Versions triées pour les <select>
+  const yearsSorted = years.slice().sort((a,b)=>collator.compare(a.label||"", b.label||""));
+  const zonesSorted = zones.slice().sort((a,b)=>collator.compare(a.name||"", b.name||""));
+  const subzonesSorted = subzones.slice().sort((a,b)=>collator.compare(a.name||"", b.name||""));
 
   return (
     <div className="p-4">
       <h1 className="text-xl font-semibold mb-4">Activités</h1>
 
       <div className="grid lg:grid-cols-2 gap-6">
-        {/* Formulaire (à gauche) */}
+        {/* Formulaire (gauche) */}
         <div className="border rounded-xl p-4 bg-white">
           <h2 className="font-semibold mb-3">Créer une activité</h2>
           <form onSubmit={submit} className="space-y-3">
+            {/* Année */}
             <select
               value={form.yearId}
               onChange={e=>setForm({...form,yearId:e.target.value})}
               className="border p-2 w-full rounded"
             >
               <option value="">-- Année --</option>
-              {years.map(y=><option key={y.id} value={y.id}>{y.label}</option>)}
+              {yearsSorted.map(y=><option key={y.id} value={y.id}>{y.label}</option>)}
             </select>
 
+            {/* Zone */}
             <select
-              disabled={!form.yearId}
               value={form.zoneId}
               onChange={e=>setForm({...form,zoneId:e.target.value})}
-              className="border p-2 w-full rounded disabled:bg-gray-100"
+              className="border p-2 w-full rounded"
             >
               <option value="">-- Zone --</option>
-              {zones.filter(z=>z.yearId===form.yearId).map(z=><option key={z.id} value={z.id}>{z.name}</option>)}
+              {zonesSorted.map(z=><option key={z.id} value={z.id}>{z.name}</option>)}
             </select>
 
+            {/* Sous-zone */}
             <select
               disabled={!form.zoneId}
               value={form.subzoneId}
@@ -236,7 +269,7 @@ export default function CreateActivity(){
               className="border p-2 w-full rounded disabled:bg-gray-100"
             >
               <option value="">-- Sous-zone --</option>
-              {subzones.filter(s=>s.zoneId===form.zoneId).map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+              {subzonesSorted.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
 
             <input
@@ -263,20 +296,20 @@ export default function CreateActivity(){
 
             <div>
               <button className="bg-blue-600 text-white px-4 py-2 rounded">
-                Créer
+                Enregistrer
               </button>
             </div>
           </form>
         </div>
 
-        {/* Liste + Filtres + CRUD (à droite) */}
+        {/* Liste + Filtres + CRUD (droite) */}
         <div className="border rounded-xl p-4 bg-white">
           <div className="flex items-center justify-between mb-3">
             <h2 className="font-semibold">Dernières activités</h2>
             <span className="text-xs text-gray-500">{activities.length} éléments</span>
           </div>
 
-          {/* Filtres */}
+          {/* Filtres liste */}
           <div className="flex flex-wrap gap-2 mb-3">
             <select
               value={filterYearId}
@@ -284,7 +317,7 @@ export default function CreateActivity(){
               className="border p-2 rounded"
             >
               <option value="">Toutes les années</option>
-              {years.map(y=>(
+              {yearsSorted.map(y=>(
                 <option key={y.id} value={y.id}>{y.label}</option>
               ))}
             </select>
@@ -321,7 +354,7 @@ export default function CreateActivity(){
                             {startStr} → {endStr}
                           </div>
                           <div className="text-xs text-gray-500">
-                            {yearLabelById[a.yearId] ?? "?"} / {zoneNameById[a.zoneId] ?? "?"} / {subzoneNameById[a.subzoneId] ?? "?"}
+                            {yearLabelById[a.yearId] ?? "?"} / {getZoneNameForActivity(a)} / {getSubzoneNameForActivity(a)}
                           </div>
                           <div className="text-xs">
                             Retours : {a.itemsReturned ?? 0}/{a.itemsTotal ?? 0} — {a.isComplete ? "🟢 Complet" : "🟠 Incomplet"}
@@ -396,10 +429,11 @@ export default function CreateActivity(){
           </div>
 
           <div className="text-xs text-gray-500 mt-3">
-            Astuce : l’édition inline modifie <code>libellé</code> et <code>dates</code>.
+            Remarque : la zone est déduite de la sous-zone (pas stockée dans l’activité).
           </div>
         </div>
       </div>
     </div>
   );
 }
+// Fin CreateActivity.tsx

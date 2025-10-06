@@ -1,21 +1,29 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   collection,
-  getDocs,
   doc,
-  updateDoc,
-  query,
-  orderBy,
-  limit,
   onSnapshot,
-  deleteDoc,
+  orderBy,
+  query,
+  updateDoc,
+  limit,
 } from "firebase/firestore";
 import { db } from "../../firebase";
 import { useAuth } from "../../contexts/AuthContext";
 import { Navigate } from "react-router-dom";
 
 type Role = "pdd_admin" | "pdd_respo" | "pdd_member";
-type U = { id: string; email: string; role: Role };
+
+type U = {
+  id: string;
+  email: string;
+  firstName?: string | null;
+  lastName?: string | null;
+  displayName?: string | null;
+  photoURL?: string | null;
+  role: Role;
+  active: boolean;
+};
 
 export default function UsersAdmin() {
   const { role, loading } = useAuth();
@@ -24,26 +32,34 @@ export default function UsersAdmin() {
 
   // UI: filtre & recherche
   const [filterRole, setFilterRole] = useState<Role | "">("");
+  const [filterActive, setFilterActive] = useState<"" | "active" | "pending">("");
   const [search, setSearch] = useState("");
 
-  // UI: édition inline
+  // UI: édition inline (un seul à la fois)
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftRole, setDraftRole] = useState<Role>("pdd_member");
 
   if (!loading && role !== "pdd_admin") {
-    // Seul pdd_admin peut modifier les rôles
     return <Navigate to="/" replace />;
   }
 
   // Chargement live
   useEffect(() => {
-    const qUsers = query(collection(db, "users"), orderBy("email"), limit(500));
+    const qUsers = query(collection(db, "users"), orderBy("email"), limit(1000));
     const unsub = onSnapshot(qUsers, (snap) => {
-      const list = snap.docs.map((d) => ({
-        id: d.id,
-        email: (d.data() as any).email || "",
-        role: ((d.data() as any).role || "pdd_member") as Role,
-      }));
+      const list = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          email: data.email || "",
+          firstName: data.firstName ?? null,
+          lastName: data.lastName ?? null,
+          displayName: data.displayName ?? null,
+          photoURL: data.photoURL ?? null,
+          role: (data.role || "pdd_member") as Role,
+          active: !!data.active,
+        } as U;
+      });
       setUsers(list);
     });
     return () => unsub();
@@ -51,15 +67,21 @@ export default function UsersAdmin() {
 
   // Filtrage client
   const filtered = useMemo(() => {
+    const needle = search.trim().toLowerCase();
     return users.filter((u) => {
       if (filterRole && u.role !== filterRole) return false;
-      if (search.trim()) {
-        const needle = search.trim().toLowerCase();
-        if (!u.email.toLowerCase().includes(needle)) return false;
+      if (filterActive === "active" && !u.active) return false;
+      if (filterActive === "pending" && u.active) return false;
+
+      if (needle) {
+        const fn = (u.firstName || "").toLowerCase();
+        const ln = (u.lastName || "").toLowerCase();
+        const em = (u.email || "").toLowerCase();
+        if (!fn.includes(needle) && !ln.includes(needle) && !em.includes(needle)) return false;
       }
       return true;
     });
-  }, [users, filterRole, search]);
+  }, [users, filterRole, filterActive, search]);
 
   // Utils rôle
   const roleLabel: Record<Role, string> = {
@@ -81,13 +103,6 @@ export default function UsersAdmin() {
       <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
     </svg>
   );
-  const IconTrash = () => (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-      stroke="currentColor" strokeWidth="2">
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-    </svg>
-  );
   const IconCheck = () => (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
       stroke="currentColor" strokeWidth="2">
@@ -105,7 +120,6 @@ export default function UsersAdmin() {
   async function changeRole(uid: string, newRole: Role) {
     setSavingId(uid);
     await updateDoc(doc(db, "users", uid), { role: newRole });
-    setUsers((prev) => prev.map((u) => (u.id === uid ? { ...u, role: newRole } : u)));
     setSavingId(null);
   }
 
@@ -119,24 +133,36 @@ export default function UsersAdmin() {
   async function saveEdit(u: U) {
     await changeRole(u.id, draftRole);
     setEditingId(null);
-    alert("Rôle mis à jour. L'utilisateur devra se reconnecter si besoin.");
+    alert("Rôle mis à jour.");
   }
 
-  async function removeUserDoc(u: U) {
-    // ⚠️ Ceci supprime SEULEMENT le document Firestore `users/{uid}`.
-    // Cela ne supprime pas le compte Auth. (Pour supprimer le compte, il faut le faire côté Admin SDK / console.)
-    if (!confirm(`Supprimer la fiche utilisateur Firestore pour "${u.email}" ?\n(Le compte Auth ne sera pas supprimé)`)) return;
+  async function toggleActive(u: U) {
     setSavingId(u.id);
-    await deleteDoc(doc(db, "users", u.id));
+    await updateDoc(doc(db, "users", u.id), { active: !u.active });
     setSavingId(null);
   }
 
-  // Avatar simple (initiale)
-  function Avatar({ email }: { email: string }) {
-    const letter = (email || "?").charAt(0).toUpperCase();
+  // Avatar (photo ou initiale)
+  function Avatar({ user }: { user: U }) {
+    const label =
+      (user.firstName || user.lastName)
+        ? `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim()
+        : (user.displayName || user.email || "");
+    const initial = (label || "?").trim().charAt(0).toUpperCase();
+
+    if (user.photoURL) {
+      return (
+        <img
+          src={user.photoURL}
+          alt={label}
+          className="w-8 h-8 rounded-full object-cover"
+          referrerPolicy="no-referrer"
+        />
+      );
+    }
     return (
       <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center text-sm font-semibold">
-        {letter}
+        {initial}
       </div>
     );
   }
@@ -151,12 +177,12 @@ export default function UsersAdmin() {
         </div>
       </div>
 
-      {/* Barre d’outils (filtres) */}
+      {/* Barre d’outils */}
       <div className="border rounded-xl bg-white p-3">
-        <div className="grid md:grid-cols-3 gap-3">
+        <div className="grid md:grid-cols-4 gap-3">
           <input
             className="border p-2 rounded"
-            placeholder="Rechercher par email…"
+            placeholder="Rechercher (nom, prénom, email)…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -170,11 +196,21 @@ export default function UsersAdmin() {
             <option value="pdd_respo">Responsable</option>
             <option value="pdd_admin">Admin</option>
           </select>
+          <select
+            className="border p-2 rounded"
+            value={filterActive}
+            onChange={(e) => setFilterActive((e.target.value || "") as "" | "active" | "pending")}
+          >
+            <option value="">Tous les statuts</option>
+            <option value="active">Activés</option>
+            <option value="pending">En attente</option>
+          </select>
           <button
             className="border px-3 py-2 rounded hover:bg-gray-50"
             onClick={() => {
               setSearch("");
               setFilterRole("");
+              setFilterActive("");
             }}
           >
             Réinitialiser
@@ -185,26 +221,39 @@ export default function UsersAdmin() {
       {/* Liste */}
       <div className="border rounded-xl bg-white">
         <div className="grid grid-cols-12 font-semibold px-4 py-2 border-b text-sm">
-          <div className="col-span-5">Utilisateur</div>
-          <div className="col-span-3">Rôle</div>
-          <div className="col-span-4 text-right">Actions</div>
+          <div className="col-span-4">Utilisateur</div>
+          <div className="col-span-3">Email</div>
+          <div className="col-span-2">Rôle</div>
+          <div className="col-span-1">Statut</div>
+          <div className="col-span-2 text-right">Actions</div>
         </div>
 
         {filtered.map((u) => {
           const isEditing = editingId === u.id;
+          const fullName =
+            (u.firstName || u.lastName)
+              ? `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim()
+              : (u.displayName || "");
           return (
             <div key={u.id} className="grid grid-cols-12 items-center px-4 py-3 border-b hover:bg-gray-50">
               {/* Utilisateur */}
-              <div className="col-span-5 flex items-center gap-3">
-                <Avatar email={u.email} />
-                <div>
-                  <div className="font-medium">{u.email || <span className="text-gray-400">—</span>}</div>
-                  <div className="text-xs text-gray-500">uid: <code>{u.id}</code></div>
+              <div className="col-span-4 flex items-center gap-3 min-w-0">
+                <Avatar user={u} />
+                <div className="min-w-0">
+                  <div className="font-medium truncate">
+                    {fullName || <span className="text-gray-400">—</span>}
+                  </div>
+                  <div className="text-[11px] text-gray-500 truncate"><code>{u.id}</code></div>
                 </div>
               </div>
 
+              {/* Email */}
+              <div className="col-span-3 truncate">
+                {u.email || <span className="text-gray-400">—</span>}
+              </div>
+
               {/* Rôle */}
-              <div className="col-span-3">
+              <div className="col-span-2">
                 {!isEditing ? (
                   <span className={`inline-block px-2 py-1 rounded text-xs ${roleClass[u.role]}`}>
                     {roleLabel[u.role]}
@@ -222,51 +271,31 @@ export default function UsersAdmin() {
                 )}
               </div>
 
+              {/* Statut */}
+              <div className="col-span-1">
+                <span className={`text-xs px-2 py-1 rounded ${u.active ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700"}`}>
+                  {u.active ? "Activé" : "En attente"}
+                </span>
+              </div>
+
               {/* Actions */}
-              <div className="col-span-4">
+              <div className="col-span-2">
                 {!isEditing ? (
-                  <div className="flex justify-end items-center gap-2 text-gray-600">
-                    {/* Modifier (passe en mode édition) */}
+                  <div className="flex justify-end items-center gap-2">
                     <button
                       className="p-2 rounded hover:bg-gray-200"
                       title="Modifier le rôle"
-                      aria-label="Modifier le rôle"
                       onClick={() => startEdit(u)}
                     >
                       <IconEdit />
                     </button>
-
-                    {/* Raccourcis de rôle */}
                     <button
                       disabled={savingId === u.id}
-                      className="text-xs border px-2 py-1 rounded hover:bg-gray-100"
-                      onClick={() => changeRole(u.id, "pdd_member")}
+                      className={`text-xs px-2 py-1 rounded border ${u.active ? "hover:bg-gray-50" : "bg-blue-600 text-white border-blue-600 hover:opacity-90"}`}
+                      onClick={() => toggleActive(u)}
+                      title={u.active ? "Désactiver l'utilisateur" : "Activer l'utilisateur"}
                     >
-                      Membre
-                    </button>
-                    <button
-                      disabled={savingId === u.id}
-                      className="text-xs border px-2 py-1 rounded hover:bg-gray-100"
-                      onClick={() => changeRole(u.id, "pdd_respo")}
-                    >
-                      Responsable
-                    </button>
-                    <button
-                      disabled={savingId === u.id}
-                      className="text-xs border px-2 py-1 rounded hover:bg-gray-100"
-                      onClick={() => changeRole(u.id, "pdd_admin")}
-                    >
-                      Admin
-                    </button>
-
-                    {/* Supprimer (doc Firestore) */}
-                    <button
-                      className="p-2 rounded hover:bg-red-50 hover:text-red-600"
-                      title="Supprimer la fiche Firestore"
-                      aria-label="Supprimer la fiche Firestore"
-                      onClick={() => removeUserDoc(u)}
-                    >
-                      <IconTrash />
+                      {u.active ? "Désactiver" : "Activer"}
                     </button>
                   </div>
                 ) : (
@@ -297,8 +326,8 @@ export default function UsersAdmin() {
       </div>
 
       <div className="text-xs text-gray-500">
-        Remarque : la suppression ici retire uniquement le document <code>users/{`{uid}`}</code> dans Firestore.
-        Pour supprimer le compte d’authentification, fais-le via la console Firebase ou une Cloud Function Admin.
+        Remarque : l’activation/désactivation agit uniquement sur le document <code>users/{`{uid}`}</code>.
+        L’accès aux pages est bloqué via <em>ProtectedRoute</em> tant que <code>active=false</code>.
       </div>
     </div>
   );

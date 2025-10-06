@@ -1,6 +1,6 @@
 
 export type Year = { id:string; label:string; startDate?:any; endDate?:any };
-export type Zone = { id:string; name:string; yearId:string };
+export type Zone = { id:string; name:string; };
 export type Subzone = { id:string; name:string; zoneId:string };
 export type Service = { id:string; name:string; active:boolean };
 
@@ -10,7 +10,6 @@ export type Activity = {
   startDate:any; 
   endDate:any;
   yearId:string; 
-  // zoneId:string; 
   subzoneId:string;
   itemsTotal:number; 
   itemsReturned:number; 
@@ -20,12 +19,17 @@ export type Activity = {
 
 export type Item = {
   id:string;
-  name:string; 
+  name:string;
   qty:number;
-  sortieChecked:boolean; 
+  sortieChecked:boolean;
   sortieAt:any|null;
-  retourChecked:boolean; 
+  sortieByUid?: string|null;
+  sortieByName?: string|null;
+  retourChecked:boolean;
   retourAt:any|null;
-  createdAt:any; 
+  retourByUid?: string|null;
+  retourByName?: string|null;
+  createdAt:any;
   updatedAt:any;
 };
+

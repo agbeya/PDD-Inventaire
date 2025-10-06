@@ -46,6 +46,7 @@ export default function CreateActivity(){
   // Filtres LISTE
   const [filterYearId, setFilterYearId] = useState<string>("");
   const [filterStatus, setFilterStatus] = useState<"all"|"complete"|"incomplete">("all");
+  const [filterLabel, setFilterLabel] = useState<string>("");
 
   const nav = useNavigate();
 
@@ -59,20 +60,16 @@ export default function CreateActivity(){
       const mm = String(date.getMonth()+1).padStart(2,"0");
       const dd = String(date.getDate()).padStart(2,"0");
       return `${yyyy}-${mm}-${dd}`;
-    } catch {
-      return "";
-    }
+    } catch { return ""; }
   }
 
   // Référentiels (triés)
   useEffect(()=>{ (async()=>{
-    // Années triées par libellé
     const ysSnap = await getDocs(query(collection(db,"years"), orderBy("label")));
     const ys = ysSnap.docs.map(d=>({id:d.id, ...(d.data() as any)})) as Year[];
     ys.sort((a,b)=>collator.compare(a.label||"", b.label||""));
     setYears(ys);
 
-    // Zones triées par nom
     const zsSnap = await getDocs(query(collection(db,"zones"), orderBy("name")));
     const zs = zsSnap.docs.map(d=>({id:d.id, ...(d.data() as any)})) as Zone[];
     zs.sort((a,b)=>collator.compare(a.name||"", b.name||""));
@@ -80,7 +77,6 @@ export default function CreateActivity(){
   })(); },[]);
 
   // Sous-zones filtrées par zone choisie (triées)
-  // 🔁 remplace tout l'effet "Sous-zones filtrées…" par ceci
   useEffect(() => {
     if (!form.zoneId) {
       setSubzones([]);
@@ -89,17 +85,10 @@ export default function CreateActivity(){
     }
     (async () => {
       try {
-        const qsz = query(
-          collection(db, "subzones"),
-          where("zoneId", "==", form.zoneId) // ← plus de orderBy ici
-        );
+        const qsz = query(collection(db, "subzones"), where("zoneId", "==", form.zoneId));
         const szz = await getDocs(qsz);
         const list = szz.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as Subzone[];
-
-        // tri local (alpha FR + numérique)
-        const collator = new Intl.Collator("fr", { sensitivity: "base", numeric: true });
         list.sort((a, b) => collator.compare(a.name || "", b.name || ""));
-
         setSubzones(list);
         setForm(f => ({ ...f, subzoneId: "" }));
       } catch (e) {
@@ -109,7 +98,7 @@ export default function CreateActivity(){
     })();
   }, [form.zoneId]);
 
-  // Liste activités (live) — avec filtres Année + Statut
+  // Liste activités (live) — filtres Année + Statut côté requête
   useEffect(()=> {
     setLoadingList(true);
 
@@ -120,7 +109,7 @@ export default function CreateActivity(){
       clauses.push(where("isComplete","==", wantComplete));
     }
 
-    const qAct = query(collection(db,"activities"), ...clauses, orderBy("startDate","desc"), limit(50));
+    const qAct = query(collection(db,"activities"), ...clauses, orderBy("startDate","desc"), limit(200));
 
     const unsub = onSnapshot(qAct, snap => {
       const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as ActivityRow[];
@@ -144,7 +133,7 @@ export default function CreateActivity(){
     return () => unsub();
   }, [filterYearId, filterStatus]);
 
-  // On veut toutes les sous-zones (pour affichage de la liste)
+  // Sous-zones (toutes) pour affichage liste
   const [subzonesAll, setSubzonesAll] = useState<Subzone[]>([]);
   useEffect(()=> {
     (async ()=>{
@@ -155,12 +144,19 @@ export default function CreateActivity(){
     })();
   },[]);
 
-  // Maps pour affichage
+  // Maps d'affichage
   const yearLabelById   = useMemo(()=>Object.fromEntries(years.map(y=>[y.id,y.label])),[years]);
   const zoneById        = useMemo(()=>Object.fromEntries(zones.map(z=>[z.id,z.name])),[zones]);
   const subzoneAllById  = useMemo(()=>Object.fromEntries(subzonesAll.map(s=>[s.id,s])),[subzonesAll]);
 
-  // Création activité — on n’enregistre PAS zoneId
+  // Filtre par libellé (client-side)
+  const activitiesFiltered = useMemo(()=>{
+    if (!filterLabel.trim()) return activities;
+    const needle = filterLabel.toLocaleLowerCase();
+    return activities.filter(a => (a.label || "").toLocaleLowerCase().includes(needle));
+  }, [activities, filterLabel]);
+
+  // Création activité
   async function submit(e:React.FormEvent){
     e.preventDefault();
     if(!form.yearId || !form.subzoneId || !form.label || !form.startDate || !form.endDate) return;
@@ -212,7 +208,7 @@ export default function CreateActivity(){
     await deleteDoc(doc(db,"activities",a.id));
   }
 
-  // Helpers d’affichage pour la liste
+  // Helpers d’affichage
   function getZoneNameForActivity(a: ActivityRow): string {
     // legacy
     // @ts-ignore
@@ -233,12 +229,12 @@ export default function CreateActivity(){
   const subzonesSorted = subzones.slice().sort((a,b)=>collator.compare(a.name||"", b.name||""));
 
   return (
-    <div className="p-4">
-      <h1 className="text-xl font-semibold mb-4">Activités</h1>
+    <div className="p-4 space-y-6">
+      <h1 className="text-xl font-semibold">Activités</h1>
 
-      <div className="grid lg:grid-cols-2 gap-6">
-        {/* Formulaire (gauche) */}
-        <div className="border rounded-xl p-4 bg-white">
+      <div className="grid lg:grid-cols-2 gap-6 items-start">
+        {/* Formulaire (gauche) — hauteur naturelle */}
+        <div className="border rounded-xl p-4 bg-white self-start">
           <h2 className="font-semibold mb-3">Créer une activité</h2>
           <form onSubmit={submit} className="space-y-3">
             {/* Année */}
@@ -295,145 +291,158 @@ export default function CreateActivity(){
             </div>
 
             <div>
-              <button className="bg-blue-600 text-white px-4 py-2 rounded">
-                Enregistrer
-              </button>
+              <button className="bg-blue-600 text-white px-4 py-2 rounded">Créer</button>
             </div>
           </form>
         </div>
 
-        {/* Liste + Filtres + CRUD (droite) */}
-        <div className="border rounded-xl p-4 bg-white">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-semibold">Dernières activités</h2>
-            <span className="text-xs text-gray-500">{activities.length} éléments</span>
+        {/* Liste + Filtres + CRUD (droite) — pleine hauteur + header sticky */}
+        {/*
+          h-[calc(100vh-2rem)] : 100vh - padding vertical global (p-4 => 1rem en haut + 1rem en bas)
+          overflow-hidden sur la carte, puis header sticky et body scrollable
+        */}
+        <div className="border rounded-xl bg-white self-stretch p-0 overflow-hidden h-[calc(100vh-6rem)]">
+          {/* Header sticky: titre + filtres */}
+          <div className="sticky top-0 z-10 bg-white border-b">
+            <div className="px-4 pt-4 flex items-center justify-between">
+              <h2 className="font-semibold">Dernières activités</h2>
+              <span className="text-xs text-gray-500">{activitiesFiltered.length} éléments</span>
+            </div>
+
+            <div className="px-4 pb-3 pt-2 flex flex-wrap gap-2">
+              <select
+                value={filterYearId}
+                onChange={(e)=>setFilterYearId(e.target.value)}
+                className="border p-2 rounded"
+              >
+                <option value="">Toutes les années</option>
+                {yearsSorted.map(y=>(
+                  <option key={y.id} value={y.id}>{y.label}</option>
+                ))}
+              </select>
+
+              <select
+                value={filterStatus}
+                onChange={(e)=>setFilterStatus(e.target.value as any)}
+                className="border p-2 rounded"
+              >
+                <option value="all">Tous les statuts</option>
+                <option value="complete">Complet</option>
+                <option value="incomplete">Incomplet</option>
+              </select>
+
+              <input
+                className="border p-2 rounded flex-1 min-w-[180px]"
+                placeholder="Rechercher par libellé…"
+                value={filterLabel}
+                onChange={(e)=>setFilterLabel(e.target.value)}
+              />
+            </div>
           </div>
 
-          {/* Filtres liste */}
-          <div className="flex flex-wrap gap-2 mb-3">
-            <select
-              value={filterYearId}
-              onChange={(e)=>setFilterYearId(e.target.value)}
-              className="border p-2 rounded"
-            >
-              <option value="">Toutes les années</option>
-              {yearsSorted.map(y=>(
-                <option key={y.id} value={y.id}>{y.label}</option>
-              ))}
-            </select>
+          {/* Corps scrollable */}
+          <div className="h-full overflow-y-auto p-4">
+            {loadingList && <div>Chargement…</div>}
+            {!loadingList && activitiesFiltered.length === 0 && (
+              <div className="text-gray-600">Aucune activité.</div>
+            )}
 
-            <select
-              value={filterStatus}
-              onChange={(e)=>setFilterStatus(e.target.value as any)}
-              className="border p-2 rounded"
-            >
-              <option value="all">Tous les statuts</option>
-              <option value="complete">Complet</option>
-              <option value="incomplete">Incomplet</option>
-            </select>
-          </div>
-
-          {loadingList && <div>Chargement…</div>}
-          {!loadingList && activities.length === 0 && (
-            <div className="text-gray-600">Aucune activité.</div>
-          )}
-
-          <div className="divide-y">
-            {activities.map(a=>{
-              const draft = editing[a.id];
-              const startStr = tsToInput(a.startDate);
-              const endStr = tsToInput(a.endDate);
-              return (
-                <div key={a.id} className="py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1">
-                      {!draft ? (
-                        <>
-                          <div className="font-semibold">{a.label}</div>
-                          <div className="text-sm text-gray-600">
-                            {startStr} → {endStr}
+            <div className="divide-y">
+              {activitiesFiltered.map(a=>{
+                const draft = editing[a.id];
+                const startStr = tsToInput(a.startDate);
+                const endStr = tsToInput(a.endDate);
+                return (
+                  <div key={a.id} className="py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1">
+                        {!draft ? (
+                          <>
+                            <div className="font-semibold">{a.label}</div>
+                            <div className="text-sm text-gray-600">
+                              {startStr} → {endStr}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {yearLabelById[a.yearId] ?? "?"} / {getZoneNameForActivity(a)} / {getSubzoneNameForActivity(a)}
+                            </div>
+                            <div className="text-xs">
+                              Retours : {a.itemsReturned ?? 0}/{a.itemsTotal ?? 0} — {a.isComplete ? "🟢 Complet" : "🟠 Incomplet"}
+                            </div>
+                          </>
+                        ) : (
+                          <div className="grid sm:grid-cols-3 gap-2">
+                            <input
+                              className="border p-2 rounded col-span-3"
+                              value={draft.label}
+                              onChange={(e)=>setEditing(prev=>({...prev,[a.id]:{...prev[a.id], label:e.target.value}}))}
+                            />
+                            <input
+                              type="date"
+                              className="border p-2 rounded"
+                              value={draft.startDate}
+                              onChange={(e)=>setEditing(prev=>({...prev,[a.id]:{...prev[a.id], startDate:e.target.value}}))}
+                            />
+                            <input
+                              type="date"
+                              className="border p-2 rounded"
+                              value={draft.endDate}
+                              onChange={(e)=>setEditing(prev=>({...prev,[a.id]:{...prev[a.id], endDate:e.target.value}}))}
+                            />
                           </div>
-                          <div className="text-xs text-gray-500">
-                            {yearLabelById[a.yearId] ?? "?"} / {getZoneNameForActivity(a)} / {getSubzoneNameForActivity(a)}
-                          </div>
-                          <div className="text-xs">
-                            Retours : {a.itemsReturned ?? 0}/{a.itemsTotal ?? 0} — {a.isComplete ? "🟢 Complet" : "🟠 Incomplet"}
-                          </div>
-                        </>
-                      ) : (
-                        <div className="grid sm:grid-cols-3 gap-2">
-                          <input
-                            className="border p-2 rounded col-span-3"
-                            value={draft.label}
-                            onChange={(e)=>setEditing(prev=>({...prev,[a.id]:{...prev[a.id], label:e.target.value}}))}
-                          />
-                          <input
-                            type="date"
-                            className="border p-2 rounded"
-                            value={draft.startDate}
-                            onChange={(e)=>setEditing(prev=>({...prev,[a.id]:{...prev[a.id], startDate:e.target.value}}))}
-                          />
-                          <input
-                            type="date"
-                            className="border p-2 rounded"
-                            value={draft.endDate}
-                            onChange={(e)=>setEditing(prev=>({...prev,[a.id]:{...prev[a.id], endDate:e.target.value}}))}
-                          />
-                        </div>
-                      )}
-                    </div>
+                        )}
+                      </div>
 
-                    <div className="flex-shrink-0 flex flex-col gap-2">
-                      {!draft ? (
-                        <>
-                          <Link
-                            to={`/activities/${a.id}/inventory`}
-                            className="text-xs bg-gray-900 text-white px-3 py-1 rounded text-center"
-                          >
-                            Inventaire
-                          </Link>
-                          <button
-                            onClick={()=>startEdit(a)}
-                            className="text-xs border px-3 py-1 rounded"
-                          >
-                            Éditer
-                          </button>
-                          <button
-                            onClick={()=>removeActivity(a)}
-                            className="text-xs border px-3 py-1 rounded text-red-600"
-                          >
-                            Supprimer
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            onClick={()=>saveEdit(a)}
-                            className="text-xs bg-blue-600 text-white px-3 py-1 rounded"
-                          >
-                            Enregistrer
-                          </button>
-                          <button
-                            onClick={()=>cancelEdit(a.id)}
-                            className="text-xs border px-3 py-1 rounded"
-                          >
-                            Annuler
-                          </button>
-                        </>
-                      )}
+                      <div className="flex-shrink-0 flex flex-col gap-2">
+                        {!draft ? (
+                          <>
+                            <Link
+                              to={`/activities/${a.id}/inventory`}
+                              className="text-xs bg-gray-900 text-white px-3 py-1 rounded text-center"
+                            >
+                              Inventaire
+                            </Link>
+                            <button
+                              onClick={()=>startEdit(a)}
+                              className="text-xs border px-3 py-1 rounded"
+                            >
+                              Éditer
+                            </button>
+                            <button
+                              onClick={()=>removeActivity(a)}
+                              className="text-xs border px-3 py-1 rounded text-red-600"
+                            >
+                              Supprimer
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={()=>saveEdit(a)}
+                              className="text-xs bg-blue-600 text-white px-3 py-1 rounded"
+                            >
+                              Enregistrer
+                            </button>
+                            <button
+                              onClick={()=>cancelEdit(a.id)}
+                              className="text-xs border px-3 py-1 rounded"
+                            >
+                              Annuler
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
 
-          <div className="text-xs text-gray-500 mt-3">
-            Remarque : la zone est déduite de la sous-zone (pas stockée dans l’activité).
+            <div className="text-xs text-gray-500 mt-3">
+              Remarque : la zone est déduite de la sous-zone (pas stockée dans l’activité).
+            </div>
           </div>
         </div>
       </div>
     </div>
   );
 }
-// Fin CreateActivity.tsx

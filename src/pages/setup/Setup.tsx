@@ -5,7 +5,6 @@ import {
   getDocs,
   orderBy,
   query,
-  where,
   serverTimestamp,
   updateDoc,
   deleteDoc,
@@ -13,7 +12,13 @@ import {
 } from "firebase/firestore";
 import { db } from "../../firebase";
 
-type Opt = { id: string; label?: string; name?: string; yearId?: string; zoneId?: string; active?: boolean };
+type Opt = {
+  id: string;
+  label?: string;
+  name?: string;
+  zoneId?: string;
+  active?: boolean;
+};
 
 export default function Setup() {
   // Data stores
@@ -24,9 +29,7 @@ export default function Setup() {
 
   // Forms
   const [yearLabel, setYearLabel] = useState("");
-  const [zoneYearId, setZoneYearId] = useState("");
   const [zoneName, setZoneName] = useState("");
-  const [subzoneYearId, setSubzoneYearId] = useState("");
   const [subzoneZoneId, setSubzoneZoneId] = useState("");
   const [subzoneName, setSubzoneName] = useState("");
   const [serviceName, setServiceName] = useState("");
@@ -41,7 +44,6 @@ export default function Setup() {
   // Load initial data
   useEffect(() => {
     (async () => {
-      // on peut garder les orderBy côté Firestore, mais on resort localement pour être sûrs
       const ys = await getDocs(query(collection(db, "years"), orderBy("label")));
       setYears(ys.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
 
@@ -56,41 +58,28 @@ export default function Setup() {
     })();
   }, []);
 
-  // Versions triées pour TOUS les affichages (selects + listes à droite)
-  const yearsSorted     = useMemo(() => [...years].sort(byLabel), [years]);
-  const zonesSorted     = useMemo(() => [...zones].sort(byName),  [zones]);
-  const subzonesSorted  = useMemo(() => [...subzones].sort(byName), [subzones]);
-  const servicesSorted  = useMemo(() => [...services].sort(byName), [services]);
-
-  // Filter zones by selected year (for Subzone form) + tri
-  const zonesForSubzone = useMemo(() => {
-    if (!subzoneYearId) return [];
-    return zones.filter((z) => z.yearId === subzoneYearId).sort(byName);
-  }, [zones, subzoneYearId]);
+  // Versions triées pour TOUS les affichages (selects + listes)
+  const yearsSorted    = useMemo(() => [...years].sort(byLabel), [years]);
+  const zonesSorted    = useMemo(() => [...zones].sort(byName),  [zones]);
+  const subzonesSorted = useMemo(() => [...subzones].sort(byName), [subzones]);
+  const servicesSorted = useMemo(() => [...services].sort(byName), [services]);
 
   // Create handlers
   async function createYear(e: React.FormEvent) {
     e.preventDefault();
     if (!yearLabel.trim()) return;
     const label = yearLabel.trim();
-    const ref = await addDoc(collection(db, "years"), {
-      label,
-      createdAt: serverTimestamp(),
-    });
-    setYears((prev) => [...prev, { id: ref.id, label }]); // pas besoin d’ordonner ici, useMemo s’en charge
+    const ref = await addDoc(collection(db, "years"), { label, createdAt: serverTimestamp() });
+    setYears((prev) => [...prev, { id: ref.id, label }]);
     setYearLabel("");
   }
 
   async function createZone(e: React.FormEvent) {
     e.preventDefault();
-    if (!zoneName.trim() || !zoneYearId) return;
+    if (!zoneName.trim()) return;
     const name = zoneName.trim();
-    const ref = await addDoc(collection(db, "zones"), {
-      name,
-      yearId: zoneYearId,
-      createdAt: serverTimestamp(),
-    });
-    setZones((prev) => [...prev, { id: ref.id, name, yearId: zoneYearId }]);
+    const ref = await addDoc(collection(db, "zones"), { name, createdAt: serverTimestamp() });
+    setZones((prev) => [...prev, { id: ref.id, name }]);
     setZoneName("");
   }
 
@@ -112,11 +101,7 @@ export default function Setup() {
     if (!serviceName.trim()) return;
     const name = serviceName.trim();
     const active = serviceActive;
-    const ref = await addDoc(collection(db, "services"), {
-      name,
-      active,
-      createdAt: serverTimestamp(),
-    });
+    const ref = await addDoc(collection(db, "services"), { name, active, createdAt: serverTimestamp() });
     setServices((prev) => [...prev, { id: ref.id, name, active }]);
     setServiceName("");
     setServiceActive(true);
@@ -148,8 +133,6 @@ export default function Setup() {
     if (!confirm(`Supprimer la zone "${z.name}" ?\n(Remarque : ne supprime pas les sous-collections associées)`)) return;
     await deleteDoc(doc(db, "zones", z.id));
     setZones(prev => prev.filter(it => it.id !== z.id));
-    // Optionnel : enlever les sous-zones orphelines de l’UI
-    // setSubzones(prev => prev.filter(s => s.zoneId !== z.id));
   }
 
   // ===== CRUD: SUBZONES =====
@@ -214,8 +197,8 @@ export default function Setup() {
       <h1 className="text-xl font-semibold">Paramétrage</h1>
 
       {/* Année */}
-      <section className="grid md:grid-cols-2 gap-6">
-        <div className="border rounded-xl p-4 bg-white">
+      <section className="grid md:grid-cols-2 gap-6 items-start auto-rows-min">
+        <div className="border rounded-xl p-4 bg-white self-start">
           <h2 className="font-semibold mb-3">Créer une année</h2>
           <form onSubmit={createYear} className="space-y-3">
             <input
@@ -231,7 +214,7 @@ export default function Setup() {
           </form>
         </div>
 
-        <div className="border rounded-xl p-4 bg-white">
+        <div className="border rounded-xl p-4 bg-white self-start max-h-[360px] overflow-y-auto overscroll-contain pr-2">
           <h3 className="font-medium mb-2">Dernières années</h3>
           <ul className="text-sm divide-y">
             {yearsSorted.slice(0, 6).map((y) => (
@@ -262,23 +245,10 @@ export default function Setup() {
       </section>
 
       {/* Zone */}
-      <section className="grid md:grid-cols-2 gap-6">
-        <div className="border rounded-xl p-4 bg-white">
+      <section className="grid md:grid-cols-2 gap-6 items-start auto-rows-min">
+        <div className="border rounded-xl p-4 bg-white self-start">
           <h2 className="font-semibold mb-3">Créer une zone</h2>
           <form onSubmit={createZone} className="space-y-3">
-            <select
-              className="border p-2 w-full rounded"
-              value={zoneYearId}
-              onChange={(e) => setZoneYearId(e.target.value)}
-              required
-            >
-              <option value="">-- Sélectionne l'année --</option>
-              {yearsSorted.map((y) => (
-                <option key={y.id} value={y.id}>
-                  {y.label}
-                </option>
-              ))}
-            </select>
             <input
               className="border p-2 w-full rounded"
               placeholder='Ex: "Europe"'
@@ -292,17 +262,12 @@ export default function Setup() {
           </form>
         </div>
 
-        <div className="border rounded-xl p-4 bg-white">
-          <h3 className="font-medium mb-2">Zones récentes</h3>
+        <div className="border rounded-xl p-4 bg-white self-start max-h-[360px] overflow-y-auto overscroll-contain pr-2">
+          <h3 className="font-medium mb-2">Zones</h3>
           <ul className="text-sm divide-y">
             {zonesSorted.slice(0, 8).map((z) => (
               <li key={z.id} className="flex items-center justify-between py-2">
-                <span>
-                  {z.name}{" "}
-                  <span className="text-gray-500">
-                    ({yearsSorted.find((y) => y.id === z.yearId)?.label ?? "?"})
-                  </span>
-                </span>
+                <span>{z.name}</span>
                 <div className="flex items-center gap-2 text-gray-600">
                   <button
                     onClick={() => editZone(z)}
@@ -328,11 +293,10 @@ export default function Setup() {
       </section>
 
       {/* Sous-zone */}
-      <section className="grid md:grid-cols-2 gap-6">
-        <div className="border rounded-xl p-4 bg-white">
+      <section className="grid md:grid-cols-2 gap-6 items-start auto-rows-min">
+        <div className="border rounded-xl p-4 bg-white self-start">
           <h2 className="font-semibold mb-3">Créer une sous-zone</h2>
           <form onSubmit={createSubzone} className="space-y-3">
-            {/* ⛔️ Année supprimée : une sous-zone ne dépend pas d'une année */}
             <select
               className="border p-2 w-full rounded"
               value={subzoneZoneId}
@@ -361,19 +325,16 @@ export default function Setup() {
           </form>
         </div>
 
-        <div className="border rounded-xl p-4 bg-white">
-          <h3 className="font-medium mb-2">Sous-zones récentes</h3>
+        <div className="border rounded-xl p-4 bg-white self-start max-h-[360px] overflow-y-auto overscroll-contain pr-2">
+          <h3 className="font-medium mb-2">Sous-zones</h3>
           <ul className="text-sm divide-y">
             {subzonesSorted.slice(0, 10).map((s) => {
               const z = zonesSorted.find((zz) => zz.id === s.zoneId);
-              const y = yearsSorted.find((yy) => yy.id === z?.yearId);
               return (
                 <li key={s.id} className="flex items-center justify-between py-2">
                   <span>
-                    {s.name}{" "}
-                    <span className="text-gray-500">
-                      ({y?.label ?? "?"} / {z?.name ?? "?"})
-                    </span>
+                    {s.name}
+                    <span className="text-gray-500"> ({z?.name ?? "?"})</span>
                   </span>
                   <div className="flex items-center gap-2 text-gray-600">
                     <button
@@ -401,8 +362,8 @@ export default function Setup() {
       </section>
 
       {/* Service */}
-      <section className="grid md:grid-cols-2 gap-6">
-        <div className="border rounded-xl p-4 bg-white">
+      <section className="grid md:grid-cols-2 gap-6 items-start auto-rows-min">
+        <div className="border rounded-xl p-4 bg-white self-start">
           <h2 className="font-semibold mb-3">Créer un service</h2>
           <form onSubmit={createService} className="space-y-3">
             <input
@@ -428,7 +389,7 @@ export default function Setup() {
           </form>
         </div>
 
-        <div className="border rounded-xl p-4 bg-white">
+        <div className="border rounded-xl p-4 bg-white self-start max-h-[360px] overflow-y-auto overscroll-contain pr-2">
           <h3 className="font-medium mb-2">Services</h3>
           <ul className="text-sm divide-y">
             {servicesSorted.slice(0, 12).map((s) => (

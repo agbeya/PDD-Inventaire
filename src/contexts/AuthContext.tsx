@@ -1,46 +1,86 @@
+// src/contexts/AuthContext.tsx
 import { createContext, useContext, useEffect, useState } from "react";
 import { onIdTokenChanged, User, getIdTokenResult } from "firebase/auth";
 import { auth } from "../firebase";
 import { doc, onSnapshot } from "firebase/firestore";
 import { db } from "../firebase";
 
-type Ctx = { user: User|null; loading: boolean; role: "pdd_admin"|"pdd_respo"|"pdd_member"|null; };
-const AuthCtx = createContext<Ctx>({user:null,loading:true,role:null});
-export const useAuth = ()=>useContext(AuthCtx);
+type Ctx = {
+  user: User|null;
+  loading: boolean;
+  role: "pdd_admin"|"pdd_respo"|"pdd_member"|null;
+  profile?: { email?:string|null; displayName?:string|null; photoURL?:string|null; firstName?:string|null; lastName?:string|null; };
+  active: boolean;
+};
+const AuthCtx = createContext<Ctx>({user:null,loading:true,role:null,active:false});
 
 export function AuthProvider({children}:{children:React.ReactNode}) {
   const [user,setUser] = useState<User|null>(null);
   const [role,setRole] = useState<Ctx["role"]>(null);
+  const [active,setActive] = useState(false);
+  const [profile,setProfile] = useState<Ctx["profile"]>({});
   const [loading,setLoading] = useState(true);
 
   useEffect(()=>{
-    const unsub = onIdTokenChanged(auth, async (u)=>{
+    let unsubscribeUser: (()=>void)|null = null;
+
+    const unsubscribeAuth = onIdTokenChanged(auth, async (u)=>{
       setUser(u||null);
-      if (u) {
-        const res = await getIdTokenResult(u, true);
-        const r = (res.claims.role as any) || "pdd_member";
-        setRole(r);
-      } else {
+
+      // Nettoie un éventuel ancien listener
+      if (unsubscribeUser) { unsubscribeUser(); unsubscribeUser = null; }
+
+      if (!u) {
+        setActive(false);
         setRole(null);
+        setProfile({});
+        setLoading(false);          // ✅ on est fixés
+        return;
       }
-      setLoading(false);
+
+      // Récupère le rôle des claims (si présent)
+      try {
+        const res = await getIdTokenResult(u, true);
+        setRole(((res.claims.role as any) || "pdd_member") as Ctx["role"]);
+      } catch {
+        setRole("pdd_member");
+      }
+
+      // Écoute du doc user
+      const ref = doc(db,"users",u.uid);
+      unsubscribeUser = onSnapshot(ref, (snap)=>{
+        if (!snap.exists()) {
+          setActive(false);
+          setProfile({
+            email: u.email ?? null,
+            displayName: u.displayName ?? null,
+            photoURL: u.photoURL ?? null,
+            firstName: null,
+            lastName: null,
+          });
+          setLoading(false);        // ✅ on a un état stabilisé
+          return;
+        }
+        const d = snap.data() as any;
+        setActive(!!d.active);
+        setProfile({
+          email: d.email ?? u.email ?? null,
+          displayName: d.displayName ?? u.displayName ?? null,
+          photoURL: d.photoURL ?? u.photoURL ?? null,
+          firstName: d.firstName ?? null,
+          lastName:  d.lastName  ?? null,
+        });
+        setLoading(false);          // ✅ on a reçu les données
+      });
     });
-    return () => unsub();
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubscribeUser) unsubscribeUser();
+    };
   },[]);
 
-  // écoute le doc user pour forcer refresh des claims si claimsSyncedAt change
-  useEffect(()=>{
-    if(!user) return;
-    const ref = doc(db,"users",user.uid);
-    const unsub = onSnapshot(ref, async snap=>{
-      if (!snap.exists()) return;
-      // à chaque MAJ (ex: rôle), on force le refresh du token
-      await user.getIdToken(true);
-      const res = await getIdTokenResult(user, true);
-      setRole((res.claims.role as any) || "pdd_member");
-    });
-    return ()=>unsub();
-  },[user]);
-
-  return <AuthCtx.Provider value={{user,loading,role}}>{children}</AuthCtx.Provider>
+  return <AuthCtx.Provider value={{user,loading,role,active,profile}}>{children}</AuthCtx.Provider>
 }
+
+export function useAuth(){ return useContext(AuthCtx); }

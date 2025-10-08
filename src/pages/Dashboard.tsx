@@ -46,6 +46,11 @@ export default function Dashboard() {
       return isNaN(parsed.getTime()) ? null : parsed;
     } catch { return null; }
   }
+  function fmtDateTime(d: any, fallback = ""): string {
+    const val = tsToDate(d);
+    if (!val) return fallback;
+    return `${val.toLocaleDateString("fr-FR")} ${val.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+  }
 
   // Charge activités (live), tri par startDate desc
   useEffect(() => {
@@ -163,7 +168,10 @@ export default function Dashboard() {
     <div className="p-4 space-y-4">
       {/* En-tête */}
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Activités</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-gray-800 flex items-center gap-2">
+          <span role="img" aria-label="stats">📊</span>
+          Activités
+        </h1>
         {isManager && (
           <Link
             to="/activities/new"
@@ -176,12 +184,13 @@ export default function Dashboard() {
 
       {/* Filtres */}
       <div className="border rounded-xl bg-white p-3">
-        <div className="grid md:grid-cols-5 gap-2">
+        {/* Ligne unique : filtres + bouton Réinitialiser */}
+        <div className="flex flex-wrap items-end gap-2">
           {/* Année */}
           <select
             value={filterYearId}
             onChange={(e) => setFilterYearId(e.target.value)}
-            className="border p-2 rounded"
+            className="border p-2 rounded flex-1 min-w-[120px]"
           >
             <option value="">Toutes les années</option>
             {years.map((y) => (
@@ -194,9 +203,9 @@ export default function Dashboard() {
             value={filterZoneId}
             onChange={(e) => {
               setFilterZoneId(e.target.value);
-              setFilterSubzoneId(""); // reset subzone quand zone change
+              setFilterSubzoneId("");
             }}
-            className="border p-2 rounded"
+            className="border p-2 rounded flex-1 min-w-[120px]"
           >
             <option value="">Toutes les zones</option>
             {zonesAll.map((z) => (
@@ -208,7 +217,7 @@ export default function Dashboard() {
           <select
             value={filterSubzoneId}
             onChange={(e) => setFilterSubzoneId(e.target.value)}
-            className="border p-2 rounded"
+            className="border p-2 rounded flex-1 min-w-[150px]"
             disabled={!filterZoneId}
           >
             <option value="">
@@ -221,43 +230,43 @@ export default function Dashboard() {
 
           {/* Libellé */}
           <input
-            className="border p-2 rounded"
+            className="border p-2 rounded flex-1 min-w-[150px]"
             placeholder="Rechercher un libellé…"
             value={searchLabel}
             onChange={(e) => setSearchLabel(e.target.value)}
           />
 
-          {/* Période (debut/fin) */}
-          <div className="grid grid-cols-2 gap-2">
+          {/* Dates */}
+          <div className="flex gap-2">
             <input
               type="date"
               className="border p-2 rounded"
               value={periodStart}
               onChange={(e) => setPeriodStart(e.target.value)}
-              title="Début de période"
             />
             <input
               type="date"
               className="border p-2 rounded"
               value={periodEnd}
               onChange={(e) => setPeriodEnd(e.target.value)}
-              title="Fin de période"
             />
           </div>
-        </div>
 
-        <div className="mt-3 flex items-center justify-between text-sm">
-          <div className="text-gray-500">
-            {filtered.length} résultat{filtered.length > 1 ? "s" : ""}
-          </div>
+          {/* Bouton Réinitialiser sur la même ligne */}
           <button
             onClick={resetFilters}
-            className="border px-3 py-1 rounded hover:bg-gray-50"
+            className="border px-3 py-2 rounded hover:bg-gray-50 whitespace-nowrap"
           >
             Réinitialiser
           </button>
         </div>
+
+        {/* Résumé résultats */}
+        <div className="mt-2 text-sm text-gray-500">
+          {filtered.length} résultat{filtered.length > 1 ? "s" : ""}
+        </div>
       </div>
+
 
       {/* Liste */}
       {loading && <div>Chargement…</div>}
@@ -267,43 +276,62 @@ export default function Dashboard() {
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
         {filtered.map((a) => {
-          const start =
-            (a as any).startDate?.toDate?.().toLocaleDateString("fr-FR") ?? "";
-          const end =
-            (a as any).endDate?.toDate?.().toLocaleDateString("fr-FR") ?? "";
+          const start = (a as any).startDate?.toDate?.().toLocaleDateString("fr-FR") ?? "";
+          const end = (a as any).endDate?.toDate?.().toLocaleDateString("fr-FR") ?? "";
           const yearLabel = yearLabelById[(a as any).yearId] ?? "?";
           const zoneName = zoneNameFromSubzoneId((a as any).subzoneId);
           const subzoneName = subzoneById[(a as any).subzoneId]?.name ?? "?";
+          const createdAt = fmtDateTime((a as any).createdAt, "");
+          const createdByName = (a as any).createdByName ?? "";
+
+          // 🎨 Couleur de fond selon complétion
+          const bgColor = a.isComplete
+            ? "bg-green-100 hover:bg-green-200 border-green-400"
+            : "bg-orange-100 hover:bg-orange-200 border-orange-400";
 
           return (
-            <div key={a.id} className="border rounded-xl p-4 space-y-2 bg-white">
+            <Link
+              key={a.id}
+              to={`/activities/${a.id}/inventory`}
+              className={`
+                block border rounded-xl p-4 space-y-2 transition-all duration-300 ease-out 
+                transform hover:scale-[1.02] hover:shadow-lg 
+                ${a.isComplete 
+                  ? "bg-green-100 hover:bg-green-200 border-green-400" 
+                  : "bg-orange-100 hover:bg-orange-200 border-orange-400"}
+              `}
+            >
               <div className="flex items-center justify-between">
-                <h2 className="font-semibold">{a.label}</h2>
-                <span title={a.isComplete ? "Complet" : "Incomplet"}>
-                  {a.isComplete ? "🟢" : "🟠"}
+                <h2 className="font-semibold truncate" style={{ maxWidth: "70%" }}>{a.label}</h2>
+                <span className="text-xs font-medium uppercase">
+                  {a.isComplete ? "Complet" : "Incomplet"}
                 </span>
               </div>
-              <div className="text-sm text-gray-600">{start} → {end}</div>
 
-              <div className="text-xs text-gray-500">
+              <div className="text-sm text-gray-700">
+                {start} → {end}
+              </div>
+
+              <div className="text-xs text-gray-600">
                 {yearLabel} / {zoneName} / {subzoneName}
               </div>
 
               <div className="text-sm">
                 Retours : {a.itemsReturned ?? 0}/{a.itemsTotal ?? 0}
               </div>
-              <div className="pt-2">
-                <Link
-                  to={`/activities/${a.id}/inventory`}
-                  className="text-sm bg-gray-900 text-white px-3 py-2 rounded"
-                >
-                  Ouvrir l’inventaire
-                </Link>
+
+              {/* Ajout : Créateur et date de création */}
+              <div className="text-xs text-gray-400 mt-1">
+                {createdAt
+                  ? <>Créée le {createdAt}{createdByName ? <> par {createdByName}</> : null}</>
+                  : <>Date de création inconnue</>
+                }
               </div>
-            </div>
+            </Link>
           );
         })}
       </div>
+
     </div>
   );
 }

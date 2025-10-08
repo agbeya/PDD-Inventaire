@@ -5,6 +5,7 @@ import {
 } from "firebase/firestore";
 import { db } from "../../firebase";
 import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../../contexts/AuthContext"; // Ajout import
 
 type Year = { id:string; label:string };
 type Zone = { id:string; name:string };
@@ -20,11 +21,21 @@ type ActivityRow = {
   isComplete?: boolean;
   itemsTotal?: number;
   itemsReturned?: number;
+  createdAt?: any;
+  createdByUid?: string;
+  createdByName?: string;
 };
 
 const collator = new Intl.Collator("fr", { sensitivity: "base", numeric: true });
 
 export default function CreateActivity(){
+  // Auth
+  const { user, profile } = useAuth();
+  const currentUserName =
+    (profile?.firstName || profile?.lastName)
+      ? `${profile?.firstName ?? ""} ${profile?.lastName ?? ""}`.trim()
+      : (profile?.displayName || user?.displayName || user?.email || "Utilisateur");
+
   // Form
   const [years,setYears]=useState<Year[]>([]);
   const [zones,setZones]=useState<Zone[]>([]);
@@ -33,6 +44,7 @@ export default function CreateActivity(){
     yearId:"", zoneId:"", subzoneId:"",
     label:"", startDate:"", endDate:""
   });
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Liste
   const [activities,setActivities] = useState<ActivityRow[]>([]);
@@ -41,6 +53,7 @@ export default function CreateActivity(){
     label: string;
     startDate: string;
     endDate: string;
+    error?: string;
   }>>({});
 
   // Filtres LISTE
@@ -156,10 +169,24 @@ export default function CreateActivity(){
     return activities.filter(a => (a.label || "").toLocaleLowerCase().includes(needle));
   }, [activities, filterLabel]);
 
+  // Contrôle date UX
+  function isEndDateValid(start: string, end: string) {
+    if (!start || !end) return true;
+    return new Date(end) >= new Date(start);
+  }
+
   // Création activité
   async function submit(e:React.FormEvent){
     e.preventDefault();
-    if(!form.yearId || !form.subzoneId || !form.label || !form.startDate || !form.endDate) return;
+    setFormError(null);
+    if(!form.yearId || !form.subzoneId || !form.label || !form.startDate || !form.endDate) {
+      setFormError("Tous les champs sont obligatoires.");
+      return;
+    }
+    if (!isEndDateValid(form.startDate, form.endDate)) {
+      setFormError("La date de fin ne peut pas être antérieure à la date de début.");
+      return;
+    }
     const ref = await addDoc(collection(db,"activities"),{
       label: form.label.trim(),
       startDate: new Date(form.startDate),
@@ -169,13 +196,15 @@ export default function CreateActivity(){
       itemsTotal: 0,
       itemsReturned: 0,
       isComplete: false,
-      createdAt: serverTimestamp()
+      createdAt: serverTimestamp(),
+      createdByUid: user?.uid ?? null,
+      createdByName: currentUserName
     });
     setForm({ yearId: "", zoneId: "", subzoneId: "", label: "", startDate: "", endDate: "" });
     nav(`/activities/${ref.id}/inventory`);
   }
 
-  // Edition inline
+  // Edition inline avec contrôle date
   function startEdit(a: ActivityRow) {
     setEditing(prev => ({
       ...prev,
@@ -183,6 +212,7 @@ export default function CreateActivity(){
         label: a.label || "",
         startDate: tsToInput(a.startDate),
         endDate: tsToInput(a.endDate),
+        error: undefined
       }
     }));
   }
@@ -195,6 +225,20 @@ export default function CreateActivity(){
   async function saveEdit(a: ActivityRow) {
     const draft = editing[a.id];
     if (!draft) return;
+    if (!draft.label || !draft.startDate || !draft.endDate) {
+      setEditing(prev => ({
+        ...prev,
+        [a.id]: { ...draft, error: "Tous les champs sont obligatoires." }
+      }));
+      return;
+    }
+    if (!isEndDateValid(draft.startDate, draft.endDate)) {
+      setEditing(prev => ({
+        ...prev,
+        [a.id]: { ...draft, error: "La date de fin ne peut pas être antérieure à la date de début." }
+      }));
+      return;
+    }
     await updateDoc(doc(db,"activities",a.id),{
       label: draft.label.trim(),
       startDate: draft.startDate ? new Date(draft.startDate) : a.startDate,
@@ -222,6 +266,18 @@ export default function CreateActivity(){
     const sz = subzoneAllById[a.subzoneId];
     return sz?.name ?? "?";
   }
+  function tsToDate(d: any): Date | null {
+    if (!d) return null;
+    if (typeof d?.toDate === "function") return d.toDate();
+    if (d instanceof Date) return d;
+    const parsed = new Date(d);
+    return isNaN(parsed.getTime()) ? null : parsed;
+  }
+  function fmtDateTime(d: any, fallback = ""): string {
+    const val = tsToDate(d);
+    if (!val) return fallback;
+    return `${val.toLocaleDateString("fr-FR")} ${val.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`;
+  }
 
   // Versions triées pour les <select>
   const yearsSorted = years.slice().sort((a,b)=>collator.compare(a.label||"", b.label||""));
@@ -229,87 +285,111 @@ export default function CreateActivity(){
   const subzonesSorted = subzones.slice().sort((a,b)=>collator.compare(a.name||"", b.name||""));
 
   return (
-    <div className="p-4 space-y-6">
-      <h1 className="text-xl font-semibold">Activités</h1>
+    <div className="p-6 space-y-10 bg-gray-50 min-h-screen">
+      <h1 className="text-2xl font-bold tracking-tight text-gray-800">
+        📋 Activités
+      </h1>
 
-      <div className="grid lg:grid-cols-2 gap-6 items-start">
+      <div className="grid lg:grid-cols-2 gap-8 items-start">
         {/* Formulaire (gauche) — hauteur naturelle */}
-        <div className="border rounded-xl p-4 bg-white self-start">
-          <h2 className="font-semibold mb-3">Créer une activité</h2>
-          <form onSubmit={submit} className="space-y-3">
-            {/* Année */}
-            <select
-              value={form.yearId}
-              onChange={e=>setForm({...form,yearId:e.target.value})}
-              className="border p-2 w-full rounded"
-            >
-              <option value="">-- Année --</option>
-              {yearsSorted.map(y=><option key={y.id} value={y.id}>{y.label}</option>)}
-            </select>
+        <div className="bg-white border rounded-2xl shadow-sm p-6 self-start hover:shadow-md transition">
+          <h2 className="font-semibold mb-3 text-lg text-gray-800">Créer une activité</h2>
+          <form onSubmit={submit} className="space-y-4">
+            <div className="space-y-2">
+              <select
+                value={form.yearId}
+                onChange={e=>setForm({...form,yearId:e.target.value})}
+                className="border p-2 w-full rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                required
+              >
+                <option value="">-- Année --</option>
+                {yearsSorted.map(y=><option key={y.id} value={y.id}>{y.label}</option>)}
+              </select>
+            </div>
 
-            {/* Zone */}
-            <select
-              value={form.zoneId}
-              onChange={e=>setForm({...form,zoneId:e.target.value})}
-              className="border p-2 w-full rounded"
-            >
-              <option value="">-- Zone --</option>
-              {zonesSorted.map(z=><option key={z.id} value={z.id}>{z.name}</option>)}
-            </select>
+            <div className="space-y-2">
+              <select
+                value={form.zoneId}
+                onChange={e=>setForm({...form,zoneId:e.target.value})}
+                className="border p-2 w-full rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                required
+              >
+                <option value="">-- Zone --</option>
+                {zonesSorted.map(z=><option key={z.id} value={z.id}>{z.name}</option>)}
+              </select>
+            </div>
 
-            {/* Sous-zone */}
-            <select
-              disabled={!form.zoneId}
-              value={form.subzoneId}
-              onChange={e=>setForm({...form,subzoneId:e.target.value})}
-              className="border p-2 w-full rounded disabled:bg-gray-100"
-            >
-              <option value="">-- Sous-zone --</option>
-              {subzonesSorted.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
+            <div className="space-y-2">
+              <select
+                disabled={!form.zoneId}
+                value={form.subzoneId}
+                onChange={e=>setForm({...form,subzoneId:e.target.value})}
+                className="border p-2 w-full rounded disabled:bg-gray-100 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                required
+              >
+                <option value="">-- Sous-zone --</option>
+                {subzonesSorted.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
 
-            <input
-              className="border p-2 w-full rounded"
-              placeholder="Libellé"
-              value={form.label}
-              onChange={e=>setForm({...form,label:e.target.value})}
-            />
+            <div className="space-y-2">
+              <input
+                className="border p-2 w-full rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                placeholder="Libellé"
+                value={form.label}
+                onChange={e=>setForm({...form,label:e.target.value})}
+                required
+              />
+            </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <input
-                type="date"
-                className="border p-2 rounded"
-                value={form.startDate}
-                onChange={e=>setForm({...form,startDate:e.target.value})}
-              />
-              <input
-                type="date"
-                className="border p-2 rounded"
-                value={form.endDate}
-                onChange={e=>setForm({...form,endDate:e.target.value})}
-              />
+              <div className="space-y-2">
+                <input
+                  type="date"
+                  className="border p-2 rounded w-full focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                  value={form.startDate}
+                  onChange={e=>setForm({...form,startDate:e.target.value, endDate: form.endDate && new Date(form.endDate) < new Date(e.target.value) ? "" : form.endDate})}
+                  required
+                  max={form.endDate || undefined}
+                />
+              </div>
+              <div className="space-y-2">
+                <input
+                  type="date"
+                  className={`border p-2 rounded w-full focus:ring-2 focus:ring-blue-500 focus:outline-none ${
+                    form.startDate && form.endDate && !isEndDateValid(form.startDate, form.endDate)
+                      ? "border-red-500"
+                      : ""
+                  }`}
+                  value={form.endDate}
+                  onChange={e=>setForm({...form,endDate:e.target.value})}
+                  required
+                  min={form.startDate || undefined}
+                />
+              </div>
             </div>
 
-            <div>
-              <button className="bg-blue-600 text-white px-4 py-2 rounded">Créer</button>
-            </div>
+            {formError && (
+              <div className="text-sm text-red-600 bg-red-50 border border-red-200 p-2 rounded">
+                {formError}
+              </div>
+            )}
+
+            <button className="bg-blue-600 hover:bg-blue-700 transition text-white px-4 py-2 rounded-md shadow-sm w-full">
+              Créer
+            </button>
           </form>
         </div>
 
         {/* Liste + Filtres + CRUD (droite) — pleine hauteur + header sticky */}
-        {/*
-          h-[calc(100vh-2rem)] : 100vh - padding vertical global (p-4 => 1rem en haut + 1rem en bas)
-          overflow-hidden sur la carte, puis header sticky et body scrollable
-        */}
-        <div className="border rounded-xl bg-white self-stretch p-0 overflow-hidden h-[calc(100vh-6rem)]">
+        <div className="bg-white border rounded-2xl shadow-sm p-0 h-[calc(100vh-8rem)] flex flex-col">
           {/* Header sticky: titre + filtres */}
           <div className="sticky top-0 z-10 bg-white border-b">
-            <div className="px-4 pt-4 flex items-center justify-between">
-              <h2 className="font-semibold">Dernières activités</h2>
+            <div className="px-6 pt-6 flex items-center justify-between">
+              <h2 className="font-semibold text-lg text-gray-800">Dernières activités</h2>
               <span className="text-xs text-gray-500">{activitiesFiltered.length} éléments</span>
             </div>
-
-            <div className="px-4 pb-3 pt-2 flex flex-wrap gap-2">
+            <div className="px-6 pb-4 pt-2 flex flex-wrap gap-2">
               <select
                 value={filterYearId}
                 onChange={(e)=>setFilterYearId(e.target.value)}
@@ -340,8 +420,8 @@ export default function CreateActivity(){
             </div>
           </div>
 
-          {/* Corps scrollable */}
-          <div className="h-full overflow-y-auto p-4">
+          {/* Corps scrollable sous le header sticky */}
+          <div className="flex-1 overflow-y-auto p-6">
             {loadingList && <div>Chargement…</div>}
             {!loadingList && activitiesFiltered.length === 0 && (
               <div className="text-gray-600">Aucune activité.</div>
@@ -353,12 +433,12 @@ export default function CreateActivity(){
                 const startStr = tsToInput(a.startDate);
                 const endStr = tsToInput(a.endDate);
                 return (
-                  <div key={a.id} className="py-3">
+                  <div key={a.id} className="py-4">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex-1">
                         {!draft ? (
                           <>
-                            <div className="font-semibold">{a.label}</div>
+                            <div className="font-semibold text-gray-900">{a.label}</div>
                             <div className="text-sm text-gray-600">
                               {startStr} → {endStr}
                             </div>
@@ -368,26 +448,56 @@ export default function CreateActivity(){
                             <div className="text-xs">
                               Retours : {a.itemsReturned ?? 0}/{a.itemsTotal ?? 0} — {a.isComplete ? "🟢 Complet" : "🟠 Incomplet"}
                             </div>
+                            {/* Ajout affichage créateur et date */}
+                            <div className="text-xs text-gray-400 mt-1">
+                              {a.createdAt
+                                ? <>Créée le {fmtDateTime(a.createdAt, "?")}{a.createdByName ? <> par {a.createdByName}</> : null}</>
+                                : <>Date de création inconnue</>
+                              }
+                            </div>
                           </>
                         ) : (
                           <div className="grid sm:grid-cols-3 gap-2">
                             <input
-                              className="border p-2 rounded col-span-3"
+                              className="border p-2 rounded col-span-3 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                               value={draft.label}
-                              onChange={(e)=>setEditing(prev=>({...prev,[a.id]:{...prev[a.id], label:e.target.value}}))}
+                              onChange={(e)=>setEditing(prev=>({...prev,[a.id]:{...prev[a.id], label:e.target.value, error: undefined}}))}
+                              required
                             />
                             <input
                               type="date"
-                              className="border p-2 rounded"
+                              className="border p-2 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
                               value={draft.startDate}
-                              onChange={(e)=>setEditing(prev=>({...prev,[a.id]:{...prev[a.id], startDate:e.target.value}}))}
+                              onChange={e=>{
+                                setEditing(prev=>{
+                                  const newStart = e.target.value;
+                                  const newEnd = draft.endDate && new Date(draft.endDate) < new Date(newStart) ? "" : draft.endDate;
+                                  return {
+                                    ...prev,
+                                    [a.id]: { ...prev[a.id], startDate: newStart, endDate: newEnd, error: undefined }
+                                  };
+                                });
+                              }}
+                              required
+                              max={draft.endDate || undefined}
                             />
                             <input
                               type="date"
-                              className="border p-2 rounded"
+                              className={`border p-2 rounded focus:ring-2 focus:ring-blue-500 focus:outline-none ${
+                                draft.startDate && draft.endDate && !isEndDateValid(draft.startDate, draft.endDate)
+                                  ? "border-red-500"
+                                  : ""
+                              }`}
                               value={draft.endDate}
-                              onChange={(e)=>setEditing(prev=>({...prev,[a.id]:{...prev[a.id], endDate:e.target.value}}))}
+                              onChange={e=>setEditing(prev=>({...prev,[a.id]:{...prev[a.id], endDate:e.target.value, error: undefined}}))}
+                              required
+                              min={draft.startDate || undefined}
                             />
+                            {draft.error && (
+                              <div className="col-span-3 text-sm text-red-600 bg-red-50 border border-red-200 p-2 rounded mt-2">
+                                {draft.error}
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -397,19 +507,19 @@ export default function CreateActivity(){
                           <>
                             <Link
                               to={`/activities/${a.id}/inventory`}
-                              className="text-xs bg-gray-900 text-white px-3 py-1 rounded text-center"
+                              className="text-xs bg-gray-900 text-white px-3 py-1 rounded text-center hover:bg-gray-800 transition"
                             >
                               Inventaire
                             </Link>
                             <button
                               onClick={()=>startEdit(a)}
-                              className="text-xs border px-3 py-1 rounded"
+                              className="text-xs border px-3 py-1 rounded hover:bg-blue-50 hover:text-blue-600 transition"
                             >
                               Éditer
                             </button>
                             <button
                               onClick={()=>removeActivity(a)}
-                              className="text-xs border px-3 py-1 rounded text-red-600"
+                              className="text-xs border px-3 py-1 rounded text-red-600 hover:bg-red-50 hover:text-red-600 transition"
                             >
                               Supprimer
                             </button>
@@ -418,13 +528,13 @@ export default function CreateActivity(){
                           <>
                             <button
                               onClick={()=>saveEdit(a)}
-                              className="text-xs bg-blue-600 text-white px-3 py-1 rounded"
+                              className="text-xs bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 transition"
                             >
                               Enregistrer
                             </button>
                             <button
                               onClick={()=>cancelEdit(a.id)}
-                              className="text-xs border px-3 py-1 rounded"
+                              className="text-xs border px-3 py-1 rounded hover:bg-gray-50 transition"
                             >
                               Annuler
                             </button>

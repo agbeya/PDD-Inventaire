@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { doc, setDoc, serverTimestamp, getDoc } from "firebase/firestore";
 import { db } from "../../firebase";
-
 import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
@@ -28,12 +27,20 @@ export default function Login() {
   const [lastName, setLastName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showGoogleProfileForm, setShowGoogleProfileForm] = useState(false);
+  const [googleFirstName, setGoogleFirstName] = useState("");
+  const [googleLastName, setGoogleLastName] = useState("");
+  const [googleUid, setGoogleUid] = useState<string | null>(null);
+  const [googleEmail, setGoogleEmail] = useState<string | null>(null);
+  const [googleDisplayName, setGoogleDisplayName] = useState<string | null>(null);
+  const [googlePhotoURL, setGooglePhotoURL] = useState<string | null>(null);
   const nav = useNavigate();
 
   // Redirection uniquement si l'utilisateur est actif
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       if (!u) return;
+      await new Promise((r) => setTimeout(r, 500)); // petit délai
       try {
         const ref = doc(db, "users", u.uid);
         const snap = await getDoc(ref);
@@ -45,8 +52,7 @@ export default function Login() {
           setError("Votre compte est en attente d'activation par un responsable. Vous recevrez un accès une fois validé.");
         }
       } catch {
-        // en cas d'erreur de lecture Firestore, on évite de bloquer,
-        // mais c'est plus sûr de ne pas rediriger
+        console.error("Erreur de lecture Firestore:", err);
         await signOut(auth);
         setError("Impossible de vérifier l'état du compte pour l'instant. Réessayez plus tard.");
       }
@@ -86,7 +92,7 @@ export default function Login() {
         firstName: first,
         lastName: last,
         role: "pdd_member",
-        active: false, // ⛔️ nouvel utilisateur inactif par défaut
+        active: false, // nouvel utilisateur inactif par défaut
         createdAt: serverTimestamp(),
         claimsSyncedAt: null,
       });
@@ -106,6 +112,7 @@ export default function Login() {
               ? (snap.data() as any).lastName
               : last,
           updatedAt: serverTimestamp(),
+          // NE PAS TOUCHER AU CHAMP active !
         },
         { merge: true }
       );
@@ -119,7 +126,6 @@ export default function Login() {
     setError(null);
     try {
       if (mode === "login") {
-        // Connexion puis vérification "active"
         const cred = await signInWithEmailAndPassword(auth, email, pass);
         const ref = doc(db, "users", cred.user.uid);
         const snap = await getDoc(ref);
@@ -131,16 +137,11 @@ export default function Login() {
         }
         // onAuthStateChanged redirigera de toute façon
       } else {
-        // Création
         const cred = await createUserWithEmailAndPassword(auth, email, pass);
-
-        // Met à jour le displayName (Prénom Nom) côté Auth
         const fullName = `${firstName || ""} ${lastName || ""}`.trim() || undefined;
         if (fullName) {
           await updateProfile(cred.user, { displayName: fullName });
         }
-
-        // Doc Firestore (inactif par défaut)
         await ensureUserDoc(
           cred.user.uid,
           cred.user.email || email,
@@ -148,8 +149,6 @@ export default function Login() {
           cred.user.photoURL,
           { firstName: firstName || null, lastName: lastName || null }
         );
-
-        // Déconnecte immédiatement + message clair
         await signOut(auth);
         setMode("login");
         setFirstName("");
@@ -164,6 +163,7 @@ export default function Login() {
     }
   }
 
+  // Modifie handleGoogle pour afficher le formulaire si prénom/nom manquant
   async function handleGoogle() {
     setLoading(true);
     setError(null);
@@ -173,7 +173,22 @@ export default function Login() {
       const cred = await signInWithPopup(auth, provider);
       const u = cred.user;
 
-      // Crée/MAJ le doc (nouvel utilisateur => active:false)
+      // Découpe displayName
+      const inferred = splitDisplayName(u.displayName);
+      if (!inferred.firstName || !inferred.lastName) {
+        // Demande à l'utilisateur de compléter
+        setGoogleUid(u.uid);
+        setGoogleEmail(u.email || "");
+        setGoogleDisplayName(u.displayName || "");
+        setGooglePhotoURL(u.photoURL || "");
+        setGoogleFirstName(inferred.firstName ?? "");
+        setGoogleLastName(inferred.lastName ?? "");
+        setShowGoogleProfileForm(true);
+        setLoading(false);
+        return;
+      }
+
+      // Crée/MAJ le doc (ne touche pas à active si déjà existant)
       await ensureUserDoc(u.uid, u.email || "", u.displayName, u.photoURL);
 
       // Vérifie l'activation
@@ -195,6 +210,36 @@ export default function Login() {
       } else {
         setError(err?.message ?? "Échec de la connexion Google.");
       }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Ajoute cette fonction pour valider le formulaire Google
+  async function handleGoogleProfileSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError(null);
+    if (!googleFirstName.trim() || !googleLastName.trim()) {
+      setError("Prénom et nom obligatoires.");
+      setLoading(false);
+      return;
+    }
+    try {
+      if (googleUid && googleEmail) {
+        await ensureUserDoc(
+          googleUid,
+          googleEmail,
+          googleDisplayName,
+          googlePhotoURL,
+          { firstName: googleFirstName.trim(), lastName: googleLastName.trim() }
+        );
+        setShowGoogleProfileForm(false);
+        setError("Compte Google enregistré. En attente d'activation par un responsable.");
+        await signOut(auth);
+      }
+    } catch (err: any) {
+      setError(err?.message ?? "Erreur lors de l'enregistrement.");
     } finally {
       setLoading(false);
     }
@@ -346,6 +391,49 @@ export default function Login() {
             </button>
           </div>
         </form>
+
+        {/* Formulaire de profil Google (si nécessaire) */}
+        {showGoogleProfileForm && (
+          <form
+            onSubmit={handleGoogleProfileSubmit}
+            className="w-full border rounded-xl p-6 space-y-4 bg-white shadow-sm mb-4"
+          >
+            <h2 className="text-lg font-semibold text-center">Compléter votre profil Google</h2>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-sm">Prénom</label>
+                <input
+                  className="border rounded w-full p-2"
+                  value={googleFirstName}
+                  onChange={e => setGoogleFirstName(e.target.value)}
+                  placeholder="Ex: Jean"
+                  required
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-sm">Nom</label>
+                <input
+                  className="border rounded w-full p-2"
+                  value={googleLastName}
+                  onChange={e => setGoogleLastName(e.target.value)}
+                  placeholder="Ex: Dupont"
+                  required
+                />
+              </div>
+            </div>
+            <button
+              className="w-full bg-blue-600 text-white rounded p-2 disabled:opacity-60"
+              disabled={loading}
+            >
+              {loading ? "Veuillez patienter…" : "Enregistrer"}
+            </button>
+            {error && (
+              <div className="text-sm text-red-600 bg-red-50 border border-red-200 p-2 rounded mt-2">
+                {error}
+              </div>
+            )}
+          </form>
+        )}
       </div>
     </div>
   );

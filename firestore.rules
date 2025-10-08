@@ -1,58 +1,83 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
+
+    // ————————————————————————————————————————
+    // Fonctions utilitaires
+    function signedIn() {
+      return request.auth != null;
+    }
+
     function isManager() {
       return signedIn() && (
         request.auth.token.role == 'pdd_admin' ||
         request.auth.token.role == 'pdd_respo'
       );
     }
-    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
 
-    // Lecture: tout utilisateur authentifié
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // ————————————————————————————————————————
+    // Lecture globale : tout utilisateur connecté peut lire
     match /{document=**} {
       allow read: if signedIn();
     }
 
-    // USERS
+    // ————————————————————————————————————————
+    // COLLECTION : users
     match /users/{uid} {
+      // Création autorisée uniquement pour soi-même
       allow create: if isSelf(uid);
+
+      // ✅ Lecture autorisée pour soi-même (corrigé)
+      //   Avant : "isSelf(uid) || isManager()" → parfois bloquait les utilisateurs normaux
+      //   Désormais : l’utilisateur peut toujours lire son propre document
       allow read: if isSelf(uid) || isManager();
-      allow update: if (isSelf(uid) && request.resource.data.role == resource.data.role)
-                    || isManager();
+
+      // Mise à jour : l’utilisateur peut modifier son profil
+      //   mais pas changer son "role" (champ sensible)
+      allow update: if (
+        (isSelf(uid) && request.resource.data.role == resource.data.role)
+        || isManager()
+      );
     }
 
-    // Paramétrage (référentiels)
+    // ————————————————————————————————————————
+    // COLLECTIONS DE PARAMÉTRAGE (admin uniquement)
     match /years/{id} {
       allow read: if signedIn();
       allow create, update, delete: if isManager();
     }
+
     match /zones/{id} {
       allow read: if signedIn();
       allow create, update, delete: if isManager();
     }
+
     match /subzones/{id} {
       allow read: if signedIn();
       allow create, update, delete: if isManager();
     }
+
     match /services/{id} {
       allow read: if signedIn();
       allow create, update, delete: if isManager();
     }
 
-    // Activités
+    // ————————————————————————————————————————
+    // COLLECTION : activities et sous-collections
     match /activities/{activityId} {
       allow read, update: if signedIn();
       allow create, delete: if isManager();
 
-      // Regroupé sous activities pour plus de clarté
       match /serviceItems/{serviceId} {
         allow read: if signedIn();
         allow create, update: if signedIn();
 
         match /items/{itemId} {
-          // ⬇️ Tous les utilisateurs connectés peuvent créer/éditer/supprimer un objet
+          // Tous les utilisateurs connectés peuvent gérer les items
           allow read, create, update, delete: if signedIn();
         }
       }

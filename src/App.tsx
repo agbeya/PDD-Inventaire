@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Link, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import ProtectedRoute from "./components/ProtectedRoute";
+import IdleLogoutProvider from "./components/IdleLogoutProvider";
 import RoleGate from "./components/RoleGate";
 
 import Login from "./pages/auth/Login";
@@ -10,7 +11,7 @@ import CreateActivity from "./pages/activities/CreateActivity";
 import InventoryEditor from "./pages/activities/InventoryEditor";
 import UsersAdmin from "./pages/admin/Users";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { signOut } from "firebase/auth";
 import { auth } from "./firebase";
 
@@ -18,7 +19,10 @@ export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <MainLayout />
+        {/* Déconnexion auto après 15min d'inactivité avec préavis 60s */}
+        <IdleLogoutProvider idleMaxMs={15*60*1000} warningMs={60*1000}>
+          <MainLayout />
+        </IdleLogoutProvider>
       </BrowserRouter>
     </AuthProvider>
   );
@@ -28,6 +32,7 @@ function MainLayout() {
   const location = useLocation();
   const { role, profile } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const isLoginPage = location.pathname === "/login";
 
@@ -43,13 +48,36 @@ function MainLayout() {
       : null;
   const identity = fullName || profile?.displayName || profile?.email || "";
 
+  useEffect(() => {
+    // Simule le chargement lors du changement de page
+    setLoading(true);
+    const timeout = setTimeout(() => setLoading(false), 400); // à adapter selon ton vrai loading
+    return () => clearTimeout(timeout);
+  }, [location.pathname]);
+
+  // Ajout : auto-collapse selon la largeur de la fenêtre
+  useEffect(() => {
+    function handleResize() {
+      // Rétracte si largeur < 900px, sinon déplie (sauf si manuel)
+      setCollapsed(window.innerWidth < 900);
+    }
+    window.addEventListener("resize", handleResize);
+    handleResize(); // initial
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  // Option manuelle : priorité à l'utilisateur
+  function handleToggle() {
+    setCollapsed(prev => !prev);
+  }
+
   return (
     <div className="flex h-screen">
       {!isLoginPage && (
         <SideMenu
           role={role}
           collapsed={collapsed}
-          onToggle={() => setCollapsed(!collapsed)}
+          onToggle={handleToggle}
           onSignOut={doSignOut}
           identity={identity}
           photoURL={profile?.photoURL ?? null}
@@ -57,6 +85,12 @@ function MainLayout() {
       )}
 
       <div className="flex-1 overflow-y-auto bg-gray-50">
+        {loading && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-10 pointer-events-none">
+            <div className="animate-spin rounded-full h-10 w-10 border-t-4 border-blue-600 border-solid"></div>
+          </div>
+        )}
+
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

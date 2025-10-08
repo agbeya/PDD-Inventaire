@@ -219,8 +219,8 @@ export default function UsersAdmin() {
       </div>
 
       {/* Liste */}
-      <div className="border rounded-xl bg-white">
-        <div className="grid grid-cols-12 font-semibold px-4 py-2 border-b text-sm">
+      <div className="border rounded-xl bg-white max-h-[60vh] overflow-y-auto">
+        <div className="grid grid-cols-12 font-semibold px-4 py-2 border-b text-sm sticky top-0 bg-white z-10">
           <div className="col-span-4">Utilisateur</div>
           <div className="col-span-3">Email</div>
           <div className="col-span-2">Rôle</div>
@@ -228,100 +228,102 @@ export default function UsersAdmin() {
           <div className="col-span-2 text-right">Actions</div>
         </div>
 
-        {filtered.map((u) => {
-          const isEditing = editingId === u.id;
-          const fullName =
-            (u.firstName || u.lastName)
-              ? `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim()
-              : (u.displayName || "");
-          return (
-            <div key={u.id} className="grid grid-cols-12 items-center px-4 py-3 border-b hover:bg-gray-50">
-              {/* Utilisateur */}
-              <div className="col-span-4 flex items-center gap-3 min-w-0">
-                <Avatar user={u} />
-                <div className="min-w-0">
-                  <div className="font-medium truncate">
-                    {fullName || <span className="text-gray-400">—</span>}
+        {loading ? (
+          <div className="p-6 text-center text-gray-500">Chargement…</div>
+        ) : filtered.length === 0 ? (
+          <div className="p-6 text-center text-gray-500">Aucun utilisateur trouvé.</div>
+        ) : (
+          filtered.map((u) => {
+            const isEditing = editingId === u.id;
+            const fullName =
+              (u.firstName || u.lastName)
+                ? `${u.firstName ?? ""} ${u.lastName ?? ""}`.trim()
+                : (u.displayName || "");
+            return (
+              <div key={u.id} className="grid grid-cols-12 items-center px-4 py-3 border-b hover:bg-gray-50">
+                {/* Utilisateur */}
+                <div className="col-span-4 flex items-center gap-3 min-w-0">
+                  <Avatar user={u} />
+                  <div className="min-w-0">
+                    <div className="font-medium truncate">
+                      {fullName || <span className="text-gray-400">—</span>}
+                    </div>
+                    <div className="text-[11px] text-gray-500 truncate"><code>{u.id}</code></div>
                   </div>
-                  <div className="text-[11px] text-gray-500 truncate"><code>{u.id}</code></div>
+                </div>
+
+                {/* Email */}
+                <div className="col-span-3 truncate">
+                  {u.email || <span className="text-gray-400">—</span>}
+                </div>
+
+                {/* Rôle */}
+                <div className="col-span-2">
+                  {!isEditing ? (
+                    <span className={`inline-block px-2 py-1 rounded text-xs ${roleClass[u.role]}`}>
+                      {roleLabel[u.role]}
+                    </span>
+                  ) : (
+                    <select
+                      className="border p-2 rounded w-full text-sm"
+                      value={draftRole}
+                      onChange={(e) => setDraftRole(e.target.value as Role)}
+                    >
+                      <option value="pdd_member">Membre</option>
+                      <option value="pdd_respo">Responsable</option>
+                      <option value="pdd_admin">Admin</option>
+                    </select>
+                  )}
+                </div>
+
+                {/* Statut */}
+                <div className="col-span-1">
+                  <span className={`text-xs px-2 py-1 rounded ${u.active ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700"}`}>
+                    {u.active ? "Activé" : "En attente"}
+                  </span>
+                </div>
+
+                {/* Actions */}
+                <div className="col-span-2">
+                  {!isEditing ? (
+                    <div className="flex justify-end items-center gap-2">
+                      <button
+                        className="p-2 rounded hover:bg-gray-200"
+                        title="Modifier le rôle"
+                        onClick={() => startEdit(u)}
+                      >
+                        <IconEdit />
+                      </button>
+                      <button
+                        disabled={savingId === u.id}
+                        className={`text-xs px-2 py-1 rounded border ${u.active ? "hover:bg-gray-50" : "bg-blue-600 text-white border-blue-600 hover:opacity-90"}`}
+                        onClick={() => toggleActive(u)}
+                        title={u.active ? "Désactiver l'utilisateur" : "Activer l'utilisateur"}
+                      >
+                        {u.active ? "Désactiver" : "Activer"}
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex justify-end items-center gap-2">
+                      <button
+                        disabled={savingId === u.id}
+                        className="inline-flex items-center gap-1 bg-blue-600 text-white px-3 py-1 rounded text-sm"
+                        onClick={() => saveEdit(u)}
+                      >
+                        <IconCheck /> Enregistrer
+                      </button>
+                      <button
+                        className="inline-flex items-center gap-1 border px-3 py-1 rounded text-sm"
+                        onClick={cancelEdit}
+                      >
+                        <IconClose /> Annuler
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
-
-              {/* Email */}
-              <div className="col-span-3 truncate">
-                {u.email || <span className="text-gray-400">—</span>}
-              </div>
-
-              {/* Rôle */}
-              <div className="col-span-2">
-                {!isEditing ? (
-                  <span className={`inline-block px-2 py-1 rounded text-xs ${roleClass[u.role]}`}>
-                    {roleLabel[u.role]}
-                  </span>
-                ) : (
-                  <select
-                    className="border p-2 rounded w-full text-sm"
-                    value={draftRole}
-                    onChange={(e) => setDraftRole(e.target.value as Role)}
-                  >
-                    <option value="pdd_member">Membre</option>
-                    <option value="pdd_respo">Responsable</option>
-                    <option value="pdd_admin">Admin</option>
-                  </select>
-                )}
-              </div>
-
-              {/* Statut */}
-              <div className="col-span-1">
-                <span className={`text-xs px-2 py-1 rounded ${u.active ? "bg-green-100 text-green-700" : "bg-orange-100 text-orange-700"}`}>
-                  {u.active ? "Activé" : "En attente"}
-                </span>
-              </div>
-
-              {/* Actions */}
-              <div className="col-span-2">
-                {!isEditing ? (
-                  <div className="flex justify-end items-center gap-2">
-                    <button
-                      className="p-2 rounded hover:bg-gray-200"
-                      title="Modifier le rôle"
-                      onClick={() => startEdit(u)}
-                    >
-                      <IconEdit />
-                    </button>
-                    <button
-                      disabled={savingId === u.id}
-                      className={`text-xs px-2 py-1 rounded border ${u.active ? "hover:bg-gray-50" : "bg-blue-600 text-white border-blue-600 hover:opacity-90"}`}
-                      onClick={() => toggleActive(u)}
-                      title={u.active ? "Désactiver l'utilisateur" : "Activer l'utilisateur"}
-                    >
-                      {u.active ? "Désactiver" : "Activer"}
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex justify-end items-center gap-2">
-                    <button
-                      disabled={savingId === u.id}
-                      className="inline-flex items-center gap-1 bg-blue-600 text-white px-3 py-1 rounded text-sm"
-                      onClick={() => saveEdit(u)}
-                    >
-                      <IconCheck /> Enregistrer
-                    </button>
-                    <button
-                      className="inline-flex items-center gap-1 border px-3 py-1 rounded text-sm"
-                      onClick={cancelEdit}
-                    >
-                      <IconClose /> Annuler
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          );
-        })}
-
-        {filtered.length === 0 && (
-          <div className="p-6 text-center text-gray-500">Aucun utilisateur trouvé.</div>
+            );
+          })
         )}
       </div>
 

@@ -35,42 +35,42 @@ export default function Setup() {
   const [serviceName, setServiceName] = useState("");
   const [serviceActive, setServiceActive] = useState(true);
 
-  // ------- helpers de tri (locale FR, insensible à la casse) -------
+  // Tri helpers
   const byLabel = (a: Opt, b: Opt) =>
     (a.label ?? "").localeCompare(b.label ?? "", "fr", { sensitivity: "base" });
   const byName = (a: Opt, b: Opt) =>
     (a.name ?? "").localeCompare(b.name ?? "", "fr", { sensitivity: "base" });
 
-  // Load initial data
+  // Chargement initial
   useEffect(() => {
     (async () => {
-      const ys = await getDocs(query(collection(db, "years"), orderBy("label")));
+      const [ys, zs, szz, svs] = await Promise.all([
+        getDocs(query(collection(db, "years"), orderBy("label"))),
+        getDocs(query(collection(db, "zones"), orderBy("name"))),
+        getDocs(query(collection(db, "subzones"), orderBy("name"))),
+        getDocs(query(collection(db, "services"), orderBy("name"))),
+      ]);
+
       setYears(ys.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-
-      const zs = await getDocs(query(collection(db, "zones"), orderBy("name")));
       setZones(zs.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-
-      const szz = await getDocs(query(collection(db, "subzones"), orderBy("name")));
       setSubzones(szz.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
-
-      const svs = await getDocs(query(collection(db, "services"), orderBy("name")));
       setServices(svs.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
     })();
   }, []);
 
-  // Versions triées pour TOUS les affichages (selects + listes)
-  const yearsSorted    = useMemo(() => [...years].sort(byLabel), [years]);
-  const zonesSorted    = useMemo(() => [...zones].sort(byName),  [zones]);
+  // Données triées
+  const yearsSorted = useMemo(() => [...years].sort(byLabel), [years]);
+  const zonesSorted = useMemo(() => [...zones].sort(byName), [zones]);
   const subzonesSorted = useMemo(() => [...subzones].sort(byName), [subzones]);
   const servicesSorted = useMemo(() => [...services].sort(byName), [services]);
 
-  // Create handlers
+  // CRUD — création
   async function createYear(e: React.FormEvent) {
     e.preventDefault();
     if (!yearLabel.trim()) return;
     const label = yearLabel.trim();
     const ref = await addDoc(collection(db, "years"), { label, createdAt: serverTimestamp() });
-    setYears((prev) => [...prev, { id: ref.id, label }]);
+    setYears((p) => [...p, { id: ref.id, label }]);
     setYearLabel("");
   }
 
@@ -79,7 +79,7 @@ export default function Setup() {
     if (!zoneName.trim()) return;
     const name = zoneName.trim();
     const ref = await addDoc(collection(db, "zones"), { name, createdAt: serverTimestamp() });
-    setZones((prev) => [...prev, { id: ref.id, name }]);
+    setZones((p) => [...p, { id: ref.id, name }]);
     setZoneName("");
   }
 
@@ -92,7 +92,7 @@ export default function Setup() {
       zoneId: subzoneZoneId,
       createdAt: serverTimestamp(),
     });
-    setSubzones((prev) => [...prev, { id: ref.id, name, zoneId: subzoneZoneId }]);
+    setSubzones((p) => [...p, { id: ref.id, name, zoneId: subzoneZoneId }]);
     setSubzoneName("");
   }
 
@@ -102,139 +102,149 @@ export default function Setup() {
     const name = serviceName.trim();
     const active = serviceActive;
     const ref = await addDoc(collection(db, "services"), { name, active, createdAt: serverTimestamp() });
-    setServices((prev) => [...prev, { id: ref.id, name, active }]);
+    setServices((p) => [...p, { id: ref.id, name, active }]);
     setServiceName("");
     setServiceActive(true);
   }
 
-  // ===== CRUD: YEARS =====
+  // CRUD — modifications & suppressions
   async function editYear(y: Opt) {
-    const newLabel = prompt('Modifier le libellé de l’année :', y.label ?? '');
+    const newLabel = prompt("Modifier le libellé :", y.label ?? "");
     if (newLabel === null) return;
     const label = newLabel.trim();
     await updateDoc(doc(db, "years", y.id), { label, updatedAt: serverTimestamp() });
-    setYears(prev => prev.map(it => it.id === y.id ? { ...it, label } : it));
+    setYears((p) => p.map((i) => (i.id === y.id ? { ...i, label } : i)));
   }
   async function deleteYear(y: Opt) {
-    if (!confirm(`Supprimer l’année "${y.label}" ?`)) return;
+    if (!confirm(`Supprimer "${y.label}" ?`)) return;
     await deleteDoc(doc(db, "years", y.id));
-    setYears(prev => prev.filter(it => it.id !== y.id));
+    setYears((p) => p.filter((i) => i.id !== y.id));
   }
 
-  // ===== CRUD: ZONES =====
   async function editZone(z: Opt) {
-    const newName = prompt('Modifier le nom de la zone :', z.name ?? '');
+    const newName = prompt("Modifier le nom :", z.name ?? "");
     if (newName === null) return;
     const name = newName.trim();
     await updateDoc(doc(db, "zones", z.id), { name, updatedAt: serverTimestamp() });
-    setZones(prev => prev.map(it => it.id === z.id ? { ...it, name } : it));
+    setZones((p) => p.map((i) => (i.id === z.id ? { ...i, name } : i)));
   }
   async function deleteZone(z: Opt) {
-    if (!confirm(`Supprimer la zone "${z.name}" ?\n(Remarque : ne supprime pas les sous-collections associées)`)) return;
+    if (!confirm(`Supprimer "${z.name}" ?`)) return;
     await deleteDoc(doc(db, "zones", z.id));
-    setZones(prev => prev.filter(it => it.id !== z.id));
+    setZones((p) => p.filter((i) => i.id !== z.id));
   }
 
-  // ===== CRUD: SUBZONES =====
   async function editSubzone(s: Opt) {
-    const newName = prompt('Modifier le nom de la sous-zone :', s.name ?? '');
+    const newName = prompt("Modifier le nom :", s.name ?? "");
     if (newName === null) return;
     const name = newName.trim();
     await updateDoc(doc(db, "subzones", s.id), { name, updatedAt: serverTimestamp() });
-    setSubzones(prev => prev.map(it => it.id === s.id ? { ...it, name } : it));
+    setSubzones((p) => p.map((i) => (i.id === s.id ? { ...i, name } : i)));
   }
   async function deleteSubzone(s: Opt) {
-    if (!confirm(`Supprimer la sous-zone "${s.name}" ?`)) return;
+    if (!confirm(`Supprimer "${s.name}" ?`)) return;
     await deleteDoc(doc(db, "subzones", s.id));
-    setSubzones(prev => prev.filter(it => it.id !== s.id));
+    setSubzones((p) => p.filter((i) => i.id !== s.id));
   }
 
-  // ===== CRUD: SERVICES =====
   async function editService(s: Opt) {
-    const newName = prompt('Modifier le nom du service :', s.name ?? '');
+    const newName = prompt("Modifier le nom :", s.name ?? "");
     if (newName === null) return;
     const name = newName.trim();
     await updateDoc(doc(db, "services", s.id), { name, updatedAt: serverTimestamp() });
-    setServices(prev => prev.map(it => it.id === s.id ? { ...it, name } : it));
+    setServices((p) => p.map((i) => (i.id === s.id ? { ...i, name } : i)));
   }
   async function toggleServiceActive(s: Opt) {
     const newVal = !s.active;
     await updateDoc(doc(db, "services", s.id), { active: newVal, updatedAt: serverTimestamp() });
-    setServices(prev => prev.map(it => it.id === s.id ? { ...it, active: newVal } : it));
+    setServices((p) => p.map((i) => (i.id === s.id ? { ...i, active: newVal } : i)));
   }
   async function deleteService(s: Opt) {
-    if (!confirm(`Supprimer le service "${s.name}" ?`)) return;
+    if (!confirm(`Supprimer "${s.name}" ?`)) return;
     await deleteDoc(doc(db, "services", s.id));
-    setServices(prev => prev.filter(it => it.id !== s.id));
+    setServices((p) => p.filter((i) => i.id !== s.id));
   }
 
-  // === Icônes (petits SVG inline)
+  // Icônes
   const IconEdit = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none"
-         viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
       <path d="M12 20h9" />
-      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+      <path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
     </svg>
   );
   const IconTrash = () => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none"
-         viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-      <path d="M3 6h18" />
-      <path d="M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6" />
     </svg>
   );
-  const IconToggle = ({on}:{on:boolean}) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none"
-         viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"
-         className={on ? "text-green-600" : "text-gray-400"}>
+  const IconToggle = ({ on }: { on: boolean }) => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+      className={on ? "text-green-600" : "text-gray-400"}>
       <rect x="3" y="8" width="18" height="8" rx="4"></rect>
       <circle cx={on ? 17 : 7} cy="12" r="3"></circle>
     </svg>
   );
 
+  // ————————————————————————————————————————
+  // —————— UI RENDER ————————————————
+  // ————————————————————————————————————————
   return (
-    <div className="p-4 space-y-8">
-      <h1 className="text-xl font-semibold">Paramétrage</h1>
+    <div className="p-6 space-y-10 bg-gray-50 min-h-screen">
+      <h1 className="text-2xl font-bold tracking-tight text-gray-800">
+        ⚙️ Paramétrage
+      </h1>
 
-      {/* Année */}
-      <section className="grid md:grid-cols-2 gap-6 items-start auto-rows-min">
-        <div className="border rounded-xl p-4 bg-white self-start">
-          <h2 className="font-semibold mb-3">Créer une année</h2>
-          <form onSubmit={createYear} className="space-y-3">
+      {renderSection("Années", "Créer une année", createYear, yearLabel, setYearLabel, yearsSorted, "label", editYear, deleteYear, "2024-2025")}
+      {renderSection("Zones", "Créer une zone", createZone, zoneName, setZoneName, zonesSorted, "name", editZone, deleteZone, "Europe")}
+      {renderSubzonesSection()}
+      {renderServicesSection()}
+    </div>
+  );
+
+  // ————————————————————————————————————————
+  // —————— RENDER FUNCTIONS ————————————
+  // ————————————————————————————————————————
+  function renderSection(
+    title: string,
+    formTitle: string,
+    onSubmit: (e: any) => Promise<void>,
+    inputValue: string,
+    setInputValue: (v: string) => void,
+    items: Opt[],
+    keyField: "label" | "name",
+    onEdit: (x: Opt) => void,
+    onDelete: (x: Opt) => void,
+    placeholder: string
+  ) {
+    return (
+      <section className="grid md:grid-cols-2 gap-6 items-start">
+        <div className="bg-white border rounded-2xl shadow-sm p-5 transition hover:shadow-md">
+          <h2 className="text-lg font-semibold mb-3 text-gray-800">{formTitle}</h2>
+          <form onSubmit={onSubmit} className="space-y-3">
             <input
-              className="border p-2 w-full rounded"
-              placeholder='Ex: "2024-2025"'
-              value={yearLabel}
-              onChange={(e) => setYearLabel(e.target.value)}
+              className="border p-2 w-full rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              placeholder={`Ex : "${placeholder}"`}
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
               required
             />
-            <button className="bg-blue-600 text-white px-4 py-2 rounded">
+            <button className="bg-blue-600 hover:bg-blue-700 transition text-white px-4 py-2 rounded-md shadow-sm w-full">
               Enregistrer
             </button>
           </form>
         </div>
 
-        <div className="border rounded-xl p-4 bg-white self-start max-h-[360px] overflow-y-auto overscroll-contain pr-2">
-          <h3 className="font-medium mb-2">Dernières années</h3>
+        <div className="bg-white border rounded-2xl shadow-sm p-5 max-h-[380px] overflow-y-auto">
+          <h3 className="font-medium mb-3 text-gray-700">{title}</h3>
           <ul className="text-sm divide-y">
-            {yearsSorted.slice(0, 6).map((y) => (
-              <li key={y.id} className="flex items-center justify-between py-2">
-                <span>{y.label}</span>
-                <div className="flex items-center gap-2 text-gray-600">
-                  <button
-                    onClick={() => editYear(y)}
-                    className="p-1 rounded hover:bg-gray-200"
-                    title="Modifier"
-                    aria-label="Modifier année"
-                  >
+            {items.slice(0, 8).map((item) => (
+              <li key={item.id} className="flex items-center justify-between py-2 group hover:bg-gray-50 rounded-md px-2 transition">
+                <span>{item[keyField]}</span>
+                <div className="flex items-center gap-2 text-gray-500">
+                  <button onClick={() => onEdit(item)} className="p-1 rounded hover:bg-blue-50 hover:text-blue-600 transition">
                     <IconEdit />
                   </button>
-                  <button
-                    onClick={() => deleteYear(y)}
-                    className="p-1 rounded hover:bg-red-50 hover:text-red-600"
-                    title="Supprimer"
-                    aria-label="Supprimer année"
-                  >
+                  <button onClick={() => onDelete(item)} className="p-1 rounded hover:bg-red-50 hover:text-red-600 transition">
                     <IconTrash />
                   </button>
                 </div>
@@ -243,114 +253,57 @@ export default function Setup() {
           </ul>
         </div>
       </section>
+    );
+  }
 
-      {/* Zone */}
-      <section className="grid md:grid-cols-2 gap-6 items-start auto-rows-min">
-        <div className="border rounded-xl p-4 bg-white self-start">
-          <h2 className="font-semibold mb-3">Créer une zone</h2>
-          <form onSubmit={createZone} className="space-y-3">
-            <input
-              className="border p-2 w-full rounded"
-              placeholder='Ex: "Europe"'
-              value={zoneName}
-              onChange={(e) => setZoneName(e.target.value)}
-              required
-            />
-            <button className="bg-blue-600 text-white px-4 py-2 rounded">
-              Enregistrer
-            </button>
-          </form>
-        </div>
-
-        <div className="border rounded-xl p-4 bg-white self-start max-h-[360px] overflow-y-auto overscroll-contain pr-2">
-          <h3 className="font-medium mb-2">Zones</h3>
-          <ul className="text-sm divide-y">
-            {zonesSorted.slice(0, 8).map((z) => (
-              <li key={z.id} className="flex items-center justify-between py-2">
-                <span>{z.name}</span>
-                <div className="flex items-center gap-2 text-gray-600">
-                  <button
-                    onClick={() => editZone(z)}
-                    className="p-1 rounded hover:bg-gray-200"
-                    title="Modifier"
-                    aria-label="Modifier zone"
-                  >
-                    <IconEdit />
-                  </button>
-                  <button
-                    onClick={() => deleteZone(z)}
-                    className="p-1 rounded hover:bg-red-50 hover:text-red-600"
-                    title="Supprimer"
-                    aria-label="Supprimer zone"
-                  >
-                    <IconTrash />
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </section>
-
-      {/* Sous-zone */}
-      <section className="grid md:grid-cols-2 gap-6 items-start auto-rows-min">
-        <div className="border rounded-xl p-4 bg-white self-start">
-          <h2 className="font-semibold mb-3">Créer une sous-zone</h2>
+  function renderSubzonesSection() {
+    return (
+      <section className="grid md:grid-cols-2 gap-6 items-start">
+        <div className="bg-white border rounded-2xl shadow-sm p-5 hover:shadow-md transition">
+          <h2 className="text-lg font-semibold mb-3 text-gray-800">Créer une sous-zone</h2>
           <form onSubmit={createSubzone} className="space-y-3">
             <select
-              className="border p-2 w-full rounded"
+              className="border p-2 w-full rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
               value={subzoneZoneId}
               onChange={(e) => setSubzoneZoneId(e.target.value)}
               required
             >
               <option value="">-- Zone --</option>
               {zonesSorted.map((z) => (
-                <option key={z.id} value={z.id}>
-                  {z.name}
-                </option>
+                <option key={z.id} value={z.id}>{z.name}</option>
               ))}
             </select>
 
             <input
-              className="border p-2 w-full rounded"
-              placeholder='Ex: "France"'
+              className="border p-2 w-full rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              placeholder='Ex : "France"'
               value={subzoneName}
               onChange={(e) => setSubzoneName(e.target.value)}
               required
             />
 
-            <button className="bg-blue-600 text-white px-4 py-2 rounded">
+            <button className="bg-blue-600 hover:bg-blue-700 transition text-white px-4 py-2 rounded-md shadow-sm w-full">
               Enregistrer
             </button>
           </form>
         </div>
 
-        <div className="border rounded-xl p-4 bg-white self-start max-h-[360px] overflow-y-auto overscroll-contain pr-2">
-          <h3 className="font-medium mb-2">Sous-zones</h3>
+        <div className="bg-white border rounded-2xl shadow-sm p-5 max-h-[380px] overflow-y-auto">
+          <h3 className="font-medium mb-3 text-gray-700">Sous-zones</h3>
           <ul className="text-sm divide-y">
             {subzonesSorted.slice(0, 10).map((s) => {
-              const z = zonesSorted.find((zz) => zz.id === s.zoneId);
+              const zone = zonesSorted.find((z) => z.id === s.zoneId);
               return (
-                <li key={s.id} className="flex items-center justify-between py-2">
+                <li key={s.id} className="flex items-center justify-between py-2 group hover:bg-gray-50 rounded-md px-2 transition">
                   <span>
                     {s.name}
-                    <span className="text-gray-500"> ({z?.name ?? "?"})</span>
+                    <span className="text-gray-500 text-xs"> ({zone?.name})</span>
                   </span>
-                  <div className="flex items-center gap-2 text-gray-600">
-                    <button
-                      onClick={() => editSubzone(s)}
-                      className="p-1 rounded hover:bg-gray-200"
-                      title="Modifier"
-                      aria-label="Modifier sous-zone"
-                    >
+                  <div className="flex items-center gap-2 text-gray-500">
+                    <button onClick={() => editSubzone(s)} className="p-1 rounded hover:bg-blue-50 hover:text-blue-600 transition">
                       <IconEdit />
                     </button>
-                    <button
-                      onClick={() => deleteSubzone(s)}
-                      className="p-1 rounded hover:bg-red-50 hover:text-red-600"
-                      title="Supprimer"
-                      aria-label="Supprimer sous-zone"
-                    >
+                    <button onClick={() => deleteSubzone(s)} className="p-1 rounded hover:bg-red-50 hover:text-red-600 transition">
                       <IconTrash />
                     </button>
                   </div>
@@ -360,20 +313,23 @@ export default function Setup() {
           </ul>
         </div>
       </section>
+    );
+  }
 
-      {/* Service */}
-      <section className="grid md:grid-cols-2 gap-6 items-start auto-rows-min">
-        <div className="border rounded-xl p-4 bg-white self-start">
-          <h2 className="font-semibold mb-3">Créer un service</h2>
+  function renderServicesSection() {
+    return (
+      <section className="grid md:grid-cols-2 gap-6 items-start">
+        <div className="bg-white border rounded-2xl shadow-sm p-5 hover:shadow-md transition">
+          <h2 className="text-lg font-semibold mb-3 text-gray-800">Créer un service</h2>
           <form onSubmit={createService} className="space-y-3">
             <input
-              className="border p-2 w-full rounded"
-              placeholder='Ex: "Service Instruments"'
+              className="border p-2 w-full rounded focus:ring-2 focus:ring-blue-500 focus:outline-none"
+              placeholder='Ex : "Service Instruments"'
               value={serviceName}
               onChange={(e) => setServiceName(e.target.value)}
               required
             />
-            <label className="inline-flex items-center gap-2 text-sm">
+            <label className="inline-flex items-center gap-2 text-sm text-gray-600">
               <input
                 type="checkbox"
                 checked={serviceActive}
@@ -381,53 +337,31 @@ export default function Setup() {
               />
               Actif
             </label>
-            <div>
-              <button className="bg-blue-600 text-white px-4 py-2 rounded">
-                Enregistrer
-              </button>
-            </div>
+            <button className="bg-blue-600 hover:bg-blue-700 transition text-white px-4 py-2 rounded-md shadow-sm w-full">
+              Enregistrer
+            </button>
           </form>
         </div>
 
-        <div className="border rounded-xl p-4 bg-white self-start max-h-[360px] overflow-y-auto overscroll-contain pr-2">
-          <h3 className="font-medium mb-2">Services</h3>
+        <div className="bg-white border rounded-2xl shadow-sm p-5 max-h-[380px] overflow-y-auto">
+          <h3 className="font-medium mb-3 text-gray-700">Services</h3>
           <ul className="text-sm divide-y">
             {servicesSorted.slice(0, 12).map((s) => (
-              <li key={s.id} className="flex items-center justify-between py-2">
+              <li key={s.id} className="flex items-center justify-between py-2 group hover:bg-gray-50 rounded-md px-2 transition">
                 <span className="flex items-center gap-2">
                   {s.name}
-                  <span className={`ml-2 text-xs ${s.active ? "text-green-600" : "text-gray-500"}`}>
+                  <span className={`ml-2 text-xs font-medium ${s.active ? "text-green-600" : "text-gray-400"}`}>
                     {s.active ? "Actif" : "Inactif"}
                   </span>
                 </span>
-                <div className="flex items-center gap-2 text-gray-600">
-                  {/* Toggle actif/inactif */}
-                  <button
-                    onClick={() => toggleServiceActive(s)}
-                    className="p-1 rounded hover:bg-gray-100"
-                    title={s.active ? "Désactiver" : "Activer"}
-                    aria-label="Basculer état service"
-                  >
+                <div className="flex items-center gap-2 text-gray-500">
+                  <button onClick={() => toggleServiceActive(s)} className="p-1 rounded hover:bg-gray-100 transition">
                     <IconToggle on={!!s.active} />
                   </button>
-
-                  {/* Éditer */}
-                  <button
-                    onClick={() => editService(s)}
-                    className="p-1 rounded hover:bg-gray-200"
-                    title="Modifier"
-                    aria-label="Modifier service"
-                  >
+                  <button onClick={() => editService(s)} className="p-1 rounded hover:bg-blue-50 hover:text-blue-600 transition">
                     <IconEdit />
                   </button>
-
-                  {/* Supprimer */}
-                  <button
-                    onClick={() => deleteService(s)}
-                    className="p-1 rounded hover:bg-red-50 hover:text-red-600"
-                    title="Supprimer"
-                    aria-label="Supprimer service"
-                  >
+                  <button onClick={() => deleteService(s)} className="p-1 rounded hover:bg-red-50 hover:text-red-600 transition">
                     <IconTrash />
                   </button>
                 </div>
@@ -436,6 +370,6 @@ export default function Setup() {
           </ul>
         </div>
       </section>
-    </div>
-  );
+    );
+  }
 }

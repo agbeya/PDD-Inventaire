@@ -51,6 +51,14 @@ cd ..
 # firebase deploy --only functions
 ```
 
+## Autres commande :
+```bash
+rm -rf node_modules package-lock.json pnpm-lock.yaml yarn.lock
+npm i
+npm i date-fns@3.6.0
+rm -rf node_modules/.vite
+```
+
 ## Sécurité
 Commence avec des règles souples pour le dev, puis restreins par rôles selon ton besoin.
 

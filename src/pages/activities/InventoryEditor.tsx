@@ -53,8 +53,8 @@ export default function InventoryEditor() {
 
   // Filtres UI
   const [showOnlyPending, setShowOnlyPending] = useState(false);
-  const [filterServiceId, setFilterServiceId] = useState<string>(""); // "" = tous
-  const [filterQuery, setFilterQuery] = useState<string>(""); // recherche par nom d'objet
+  const [filterServiceId, setFilterServiceId] = useState<string>("");
+  const [filterQuery, setFilterQuery] = useState<string>("");
 
   // Ajout inline
   const [addRowOpen, setAddRowOpen] = useState<Record<string, boolean>>({});
@@ -132,13 +132,13 @@ export default function InventoryEditor() {
         activityId,
         name,
         qty,
-        // --- tracking sortie
+        // tracking sortie (par défaut cochée)
         sortieChecked: true,
         sortieAt: nowServer,
         sortieByUid: user?.uid ?? null,
         sortieByName: currentUserName ?? null,
 
-        // --- retour (non fait)
+        // retour non effectué
         retourChecked: false,
         retourAt: null,
         retourByUid: null,
@@ -177,12 +177,83 @@ export default function InventoryEditor() {
     cancelAddRow(serviceId);
   }
 
-  // === Toggle retour
+  // === Toggle SORTIE (nouveau)
+  async function toggleSortie(serviceId: string, item: Item) {
+    if (!activityId) return;
+    setBusyItemIds(prev => new Set(prev).add(item.id));
+
+    const newSortie = !item.sortieChecked;
+
+    // Si on décoche la sortie, on annule aussi le retour
+    const payload: any = {
+      sortieChecked: newSortie,
+      sortieAt: newSortie ? serverTimestamp() : null,
+      sortieByUid: newSortie ? (user?.uid ?? null) : null,
+      sortieByName: newSortie ? (currentUserName ?? null) : null,
+      updatedAt: serverTimestamp(),
+    };
+    if (!newSortie) {
+      payload.retourChecked = false;
+      payload.retourAt = null;
+      payload.retourByUid = null;
+      payload.retourByName = null;
+    }
+
+    await updateDoc(
+      doc(db, "activities", activityId, "serviceItems", serviceId, "items", item.id),
+      payload
+    );
+
+    // maj locale optimiste
+    setItemsByService(prev => ({
+      ...prev,
+      [serviceId]: prev[serviceId].map(it =>
+        it.id === item.id
+          ? {
+              ...it,
+              sortieChecked: newSortie,
+              sortieAt: newSortie ? new Date() : null,
+              sortieByUid: newSortie ? (user?.uid ?? null) : null,
+              sortieByName: newSortie ? (currentUserName ?? null) : null,
+              ...(newSortie
+                ? {}
+                : {
+                    retourChecked: false,
+                    retourAt: null,
+                    retourByUid: null,
+                    retourByName: null,
+                  }),
+              updatedAt: new Date(),
+            }
+          : it
+      ),
+    }));
+
+    setBusyItemIds(prev => {
+      const n = new Set(prev);
+      n.delete(item.id);
+      return n;
+    });
+  }
+
+  // === Toggle RETOUR
   async function toggleRetour(serviceId: string, item: Item) {
     if (!activityId) return;
     setBusyItemIds(prev => new Set(prev).add(item.id));
 
     const retourChecked = !item.retourChecked;
+
+    // sécurité : impossible de “retourner” si non sorti
+    if (retourChecked && !item.sortieChecked) {
+      setBusyItemIds(prev => {
+        const n = new Set(prev);
+        n.delete(item.id);
+        return n;
+      });
+      alert("Impossible de cocher le retour : l’objet n’est pas sorti.");
+      return;
+    }
+
     await updateDoc(
       doc(db, "activities", activityId, "serviceItems", serviceId, "items", item.id),
       {
@@ -327,7 +398,7 @@ export default function InventoryEditor() {
     })();
   }, [activityId, stats.total, stats.returned, stats.complete]);
 
-  // Export PDF
+  // Export PDF (inchangé ici)
   function exportPdf() {
     if (!activity) return;
 
@@ -346,7 +417,10 @@ export default function InventoryEditor() {
 
     const docPdf = new jsPDF({ unit: "pt", format: "a4" });
     const pageWidth  = docPdf.internal.pageSize.getWidth();
-    const pageHeight = docPdf.internal.pageSize.getHeight();
+    // ✅ fix: docPdf (pas docPDF)
+    const pageHeight = docPdf.internal.pageSize.getHeight
+      ? docPdf.internal.pageSize.getHeight()
+      : (docPdf as any).internal.pageSize.height;
 
     const M = { top: 40, right: 40, bottom: 40, left: 40 };
     let y = M.top;
@@ -375,7 +449,25 @@ export default function InventoryEditor() {
     docPdf.text(`Statut : ${isCompleteNow ? "Complet" : "Incomplet"} (${returned}/${total})`, M.left, y);
     y += 24;
 
-    // Helper pour construire "date\nheure par Nom Prenom"
+    // Ajout du sommaire des services
+    docPdf.setFont("helvetica", "bold");
+    docPdf.setFontSize(12);
+    docPdf.text("Sommaire des services :", M.left, y + 10);
+    let sy = y + 26;
+    services.forEach((s) => {
+      const items = itemsByService[s.id] || [];
+      const returned = items.filter(i => i.retourChecked).length;
+      docPdf.setFont("helvetica", "normal");
+      docPdf.setFontSize(10);
+      docPdf.text(
+        `• ${s.name} : ${items.length} objet(s), ${returned} retourné(s)`,
+        M.left + 10,
+        sy
+      );
+      sy += 14;
+    });
+    y = sy + 10;
+
     const makeWhenWho = (when: any, who?: string) => {
       const d = tsToDate(when);
       if (!d) return "";
@@ -394,23 +486,15 @@ export default function InventoryEditor() {
       docPdf.text(`Service : ${s.name}`, M.left, y);
       y += 10;
 
-      // Fusion des infos "par ..." dans les colonnes de date/heure
       const rows = items.map(it => {
-        const bySortie =
-          (it as any).sortieByName ||
-          (it as any).sortieByFullName ||
-          (it as any).sortieByEmail || "";
-        const byRetour =
-          (it as any).retourByName ||
-          (it as any).retourByFullName ||
-          (it as any).retourByEmail || "";
-
+        const bySortie = (it as any).sortieByName || "";
+        const byRetour = (it as any).retourByName || "";
         return [
           it.name || "",
           String(it.qty ?? ""),
-          makeWhenWho(it.sortieAt, bySortie), // multi-lignes
+          makeWhenWho(it.sortieAt, bySortie),
           it.sortieChecked ? "Y" : "N",
-          makeWhenWho(it.retourAt, byRetour), // multi-lignes
+          makeWhenWho(it.retourAt, byRetour),
           it.retourChecked ? "Y" : "N",
         ];
       });
@@ -420,19 +504,15 @@ export default function InventoryEditor() {
         head: [[
           "Désignation du matériel",
           "Qté",
-          "Date/heure de sortie",  // contient aussi "par ..."
+          "Date/heure de sortie",
           "Sortie",
-          "Date/heure de retour",  // contient aussi "par ..."
+          "Date/heure de retour",
           "Retour",
         ]],
         body: rows.length ? rows : [["(aucun objet)", "", "", "", "", ""]],
         styles: { fontSize: 9, cellPadding: 6, overflow: "linebreak" },
         headStyles: { fillColor: [30, 41, 59], textColor: 255 },
-        // Réduit la taille dans les colonnes Date/heure (2 et 4)
-        columnStyles: {
-          2: { fontSize: 8, cellPadding: 4 },
-          4: { fontSize: 8, cellPadding: 4 },
-        },
+        columnStyles: { 2: { fontSize: 8, cellPadding: 4 }, 4: { fontSize: 8, cellPadding: 4 } },
         theme: "striped",
         margin: { left: M.left, right: M.right },
         didDrawPage: () => {
@@ -483,7 +563,6 @@ export default function InventoryEditor() {
   const startLabel = activity ? fmtDate((activity as any).startDate, "") : "";
   const endLabel   = activity ? fmtDate((activity as any).endDate, "") : "";
 
-  // Services à afficher selon filtre
   const servicesToRender = filterServiceId
     ? services.filter(s => s.id === filterServiceId)
     : services;
@@ -508,8 +587,9 @@ export default function InventoryEditor() {
             </label>
             <button
               onClick={exportPdf}
-              className="inline-flex items-center gap-2 border px-3 py-2 rounded hover:bg-white bg-gray-100"
+              className="inline-flex items-center gap-2 border px-3 py-2 rounded hover:bg-white bg-gray-100 disabled:opacity-60"
               title="Télécharger en PDF"
+              disabled={loading}
             >
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
                 <path d="M14 2H6a2 2 0 0 0-2 2v12h2V4h8V2Zm4 4H10a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2Zm0 2v12H10V8h8Zm-6 3h4v2h-4v-2Zm0 3h4v2h-4v-2Z" fill="currentColor"/>
@@ -519,7 +599,7 @@ export default function InventoryEditor() {
           </div>
         </div>
 
-        {/* Filtres complémentaires (Service + Recherche) */}
+        {/* Filtres complémentaires */}
         <div className="py-2 flex flex-wrap gap-2">
           <select
             value={filterServiceId}
@@ -573,22 +653,16 @@ export default function InventoryEditor() {
 
       {/* Services (filtrés) */}
       {servicesToRender.map(s => {
-        // base
         let list = (itemsByService[s.id] || []);
-
-        // filtre label objet
         const q = filterQuery.trim().toLowerCase();
         if (q) list = list.filter(i => (i.name || "").toLowerCase().includes(q));
-
-        // filtre retours
         const visible = showOnlyPending ? list.filter(i=>!i.retourChecked) : list;
-
         const returnedCount = list.filter(i=>i.retourChecked).length;
 
         return (
-          <div key={s.id} className="border rounded p-3 bg-white">
+          <div key={s.id} className="border rounded p-3 bg-white mb-4">
             {/* Bandeau service */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between sticky top-0 bg-white z-10 pb-2">
               <div className="space-y-0.5">
                 <h2 className="font-semibold">{s.name}</h2>
                 <div className="text-xs text-gray-500">
@@ -657,7 +731,7 @@ export default function InventoryEditor() {
               </div>
             )}
 
-            {/* Liste */}
+            {/* Liste SANS scroll interne */}
             <div className="mt-2">
               {visible.length === 0 && (
                 <div className="text-gray-500 text-sm py-2">
@@ -671,13 +745,23 @@ export default function InventoryEditor() {
                 const draft = editing[it.id];
 
                 return (
-                  <div key={it.id} className="grid grid-cols-12 gap-2 items-center py-2 border-b hover:bg-gray-50 transition">
+                  <div
+                    key={it.id}
+                    className={`grid grid-cols-12 gap-2 items-center py-2 border-b transition
+                      ${!it.retourChecked ? "bg-yellow-50 border-l-4 border-yellow-500" : "hover:bg-gray-50"}
+                    `}
+                  >
                     {/* Nom + Qté */}
-                    <div className="col-span-4">
+                    <div className="col-span-4 flex items-center gap-2">
                       {!isEditing ? (
                         <>
                           <div className="font-medium">{it.name}</div>
                           <div className="text-xs text-gray-500">Qté: {it.qty}</div>
+                          {!it.retourChecked && (
+                            <span className="ml-2 px-2 py-0.5 rounded bg-yellow-500 text-white text-xs font-semibold">
+                              À retourner
+                            </span>
+                          )}
                         </>
                       ) : (
                         <div className="flex flex-col gap-1">
@@ -700,17 +784,22 @@ export default function InventoryEditor() {
                       )}
                     </div>
 
-                    {/* Sortie */}
+                    {/* Sortie — désormais éditable */}
                     <div className="col-span-4">
                       <label className="flex items-center gap-2">
-                        <input type="checkbox" disabled checked={!!it.sortieChecked} />
+                        <input
+                          type="checkbox"
+                          checked={!!it.sortieChecked}
+                          onChange={() => toggleSortie(s.id, it)}
+                          disabled={isBusy}
+                        />
                         <span>Sortie</span>
                       </label>
                       <div className="text-[11px] text-gray-500">
-                        {fmtDateTime(it.sortieAt, "")}
+                        {it.sortieChecked ? fmtDateTime(it.sortieAt, "") : ""}
                       </div>
                       <div className="text-[11px] text-gray-600 italic truncate">
-                        {it.sortieByName || ""}
+                        {it.sortieChecked ? ( (it as any).sortieByName || "" ) : ""}
                       </div>
                     </div>
 
@@ -729,7 +818,7 @@ export default function InventoryEditor() {
                         {it.retourChecked ? fmtDateTime(it.retourAt, "") : ""}
                       </div>
                       <div className="text-[11px] text-gray-600 italic truncate">
-                        {it.retourChecked ? (it.retourByName || "") : ""}
+                        {it.retourChecked ? ((it as any).retourByName || "") : ""}
                       </div>
                     </div>
 
@@ -747,7 +836,7 @@ export default function InventoryEditor() {
                             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none"
                               viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
                               <path d="M12 20h9" />
-                              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                              <path d="M16.5 3.5a2 2 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
                             </svg>
                           </button>
                           <button
